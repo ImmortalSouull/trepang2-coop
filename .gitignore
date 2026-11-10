@@ -1,0 +1,7 @@
+# Never commit game files or derived data
+research/
+dist/
+third_party/
+*.zip
+*.mp4
+__pycache__/

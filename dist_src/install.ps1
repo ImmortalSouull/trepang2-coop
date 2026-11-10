@@ -84,7 +84,7 @@ if (-not $steamMode -and $text -notmatch '\[OnlineSubsystem\][^\[]*DefaultPlatfo
     Set-Content $engine ($text + "`r`n[OnlineSubsystem]`r`nDefaultPlatformService=Null`r`n") -Encoding ascii -NoNewline
 }
 
-# 4) Optional: the host's IP for F6.
+# 4) Optional: the host's IP (pre-filled in the F4 menu's join box).
 $cfg = Join-Path $dst "config.txt"
 if (-not (Test-Path $cfg)) {
     $ip = Read-Host "Host IP for joining (press Enter to skip - you can edit $cfg later)"

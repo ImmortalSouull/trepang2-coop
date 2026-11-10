@@ -42,7 +42,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Players[/b][/size]
 [list]
-[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player. Or [b]dress up as an enemy[/b]: F4 menu - LOOK cycles through 16 enemy outfits (Mall Cop, Cultist, Cultist Captain, Horizon Guard and Elite, Black Ops, Bulldozer, Hazmat, Biologist, HECU, Lawyer Thug, Bodyguard, Corsair, Bandit, Outlaw, Rig Worker) - real enemy gear, everyone sees it.
+[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player. Or [b]dress up as an enemy[/b]: in the F4 menu pick any of about 330 enemy variants from 30 factions (Mall Cops, Cultists, Horizon guards / elite / TTMF with night vision / Black Ops, Hazmats, Bad Oil bandits, Lawyer Thugs, Replicas, 107 and more) - with a turning preview of how the others will see you. Real enemy gear, everyone sees it.
 [*][b]Fully animated partners[/b]: walking, sprinting, crouching, sliding, jumping, dropkick, aiming up and down, the right grip for every weapon, dual wielding.
 [*]Partners' and the host's shots are seen and heard by everyone (gun animation, sound, muzzle flash).
 [*]Steam names over partner markers (with distance, visible through walls), "joined" / "left" notices.
@@ -65,8 +65,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Controls[/b][/size]
 [list]
-[*][b]F4[/b] - co-op menu (host, join, leave, arena, players, network mode, Steam invite)
-[*][b]F5[/b] host, [b]F6[/b] join, [b]F7[/b] leave, [b]F8[/b] next Horde arena
+[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look. Everything is there - no other keys.
 [/list]
 
 [size=4][b]Known issues (beta)[/b][/size]

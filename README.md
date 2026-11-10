@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.7.2 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.7.3 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -18,13 +18,10 @@ Notes for every version are in [docs/releases](docs/releases).
 2. Start the game once; if the mod says "restart the game once" — restart it.
 
 ## Play
-| Key | Action |
-|---|---|
-| F4 | co-op menu: host, next arena, join (type the address), leave, players, network mode |
-| F8 | pick a Horde arena (cycles through ~40) |
-| F5 | host co-op on the selected arena |
-| F6 | join the host (IP in `ue4ss/Mods/T2Coop/config.txt`) |
-| F7 | leave co-op |
+Everything is in one menu: press **F4** (main menu or in a level).
+HOST, NEXT ARENA (Horde), JOIN (type the address), LEAVE, players, network mode (IP / Steam),
+Steam invite, and LOOK - your look for the others (safehouse outfit or any of ~330 enemy variants
+in 30 factions) with a turning preview of it.
 
 Over the internet the host needs **UDP port 7777** open, or both players use Porthole / Radmin VPN / ZeroTier.
 

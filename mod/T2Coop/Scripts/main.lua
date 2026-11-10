@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.2"
+local VERSION = "0.7.3"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -883,6 +883,47 @@ local function myPawn()
     local pc = localPC()
     return valid(pc) and pc.Pawn or nil
 end
+
+-- Enemy copies on a client come with movement mode None: their animation thinks they are in the
+-- air (stuck in a falling pose). Give the living ones Walking, like on the host.
+S.every(500, function()
+    if not S.joined then return end
+    for _, n in ipairs(S.allOf("/Game/Blueprint/AI/BaseNPC.BaseNPC_C")) do
+        pcall(function()
+            if n.bIsDead or (tonumber(n.Health) or 1) <= 0 or S.costumeSet[n:GetFullName()] then return end
+            local cm = n.CharacterMovement
+            if cm.MovementMode == 0 then cm:SetMovementMode(1, 0) end
+        end)
+    end
+end)
+
+-- Grenade warning circles: every player body has the component and each one draws on OUR screen,
+-- so partners' bodies showed their grenades to us and one grenade gave one circle per player.
+-- Only our own body keeps it.
+S.every(1000, function()
+    if not (S.hosting or S.joined) then return end
+    local mine = myPawn()
+    if not valid(mine) then return end
+    for _, p in ipairs(S.allOf("/Game/Blueprint/Player/PlayerBP.PlayerBP_C")) do
+        local ok, gi = pcall(function() return p.BP_CircleGrenadeIndicator end)
+        if ok and valid(gi) then
+            local own = same(p, mine)
+            local okT, on = pcall(function() return gi:IsComponentTickEnabled() end)
+            if okT and on ~= own then
+                pcall(function() gi:SetComponentTickEnabled(own) end)
+                if not own then
+                    pcall(function()
+                        for _, w in ipairs(gi.PointDamageIndicators) do
+                            w = w.get and w:get() or w
+                            pcall(function() w:RemoveFromParent() end)
+                        end
+                        gi.PointDamageIndicators:Empty()
+                    end)
+                end
+            end
+        end
+    end
+end)
 
 local function setDown(p, down)
     me.down = down
@@ -1848,6 +1889,8 @@ S.SKINS = {
     { id = "captain",   name = "Cultist Captain",  cls = "/Game/Character/NPC/Human/Type/Cultist/Captain/NPC_CultistCaptain_NonBoss.NPC_CultistCaptain_NonBoss_C" },
     { id = "guard",     name = "Horizon Guard",    cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Guard_Rifle.NPC_Guard_Rifle_C" },
     { id = "elite",     name = "Horizon Elite",    cls = "/Game/Character/NPC/Human/Type/Blue/NPC_GuardElite.NPC_GuardElite_C" },
+    { id = "ttmf",      name = "TTMF (NVG)",       cls = "/Game/Character/NPC/Human/Type/Blue/NPC_GuardElite_NVG.NPC_GuardElite_NVG_C" },
+    { id = "ttmf2",     name = "TTMF Guard (NVG)", cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Guard_NVG_SMG.NPC_Guard_NVG_SMG_C" },
     { id = "blackops",  name = "Black Ops",        cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Guard_BlackOps.NPC_Guard_BlackOps_C" },
     { id = "bulldozer", name = "Bulldozer",        cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Bulldozer_Rifle.NPC_Bulldozer_Rifle_C" },
     { id = "hazmat",    name = "Hazmat",           cls = "/Game/Character/NPC/Human/Type/Blue/Site83_Mothman/NPC_Site83_Hazmat_SL8.NPC_Site83_Hazmat_SL8_C" },
@@ -1860,8 +1903,82 @@ S.SKINS = {
     { id = "outlaw",    name = "Outlaw",           cls = "/Game/Character/NPC/Human/Type/Blue/BadOil/Outlaw/NPC_Outlaw_AR1.NPC_Outlaw_AR1_C" },
     { id = "rigworker", name = "Rig Worker",       cls = "/Game/Character/NPC/Human/Type/Blue/HECU/NPC_RigWorker_SMG.NPC_RigWorker_SMG_C" },
 }
+-- Every enemy kind in the game, found in its files (NPC_* classes), grouped by faction. Civilians,
+-- test/scripted/cutscene copies and creatures with another skeleton are left out. An entry's id is
+-- its class path (that's what is saved in config.txt and sent to the others).
+local CAT_SKIP = { "Base$", "Base_", "_Base", "VHS", "CSS_", "TMOD", "Bullseye", "Cutscene", "Scripted", "Tut",
+    "Test", "Civilian", "Nurse", "Hostage", "Dummy", "Zoo", "Mothman", "Golem", "Peeker", "Zombie", "Whisperer",
+    "Drone", "Turret", "Heli", "Betrayal", "Decoy", "Ragdoll", "Corpse", "Template", "Rat" }
+local FACTION_NAMES = { Green = "Mercs", Red = "Replicas", Mall = "Mall Cops", Dark106 = "107", CheapAI = "Guard",
+    Guard = "Horizon", HVT = "HVT & bosses", BadOil = "Bad Oil",
+    Site83_Mothman = "Site 83", Amnesty = "Amnesty", Creepers = "Creepers", LawyerThugs = "Lawyer Thugs",
+    MonolithSlave = "Monolith", Moth = "Moth cult", Jiggly = "Jigglyboi", British = "British" }
+function S.catalog()
+    if S.cat then return S.cat end
+    local AR = StaticFindObject("/Script/AssetRegistry.Default__AssetRegistryHelpers"):GetAssetRegistry()
+    local found = {}
+    for _, dir in ipairs({ "/Game/Character/NPC", "/Game/Blueprint/HVT", "/Game/AssetPack" }) do
+        local arr = {}
+        pcall(function() AR:GetAssetsByPath(FName(dir, EFindName.FNAME_Add), arr, true, false) end)
+        for _, a in ipairs(arr) do
+            pcall(function()
+                local x = a:get()
+                local n = x.AssetName:ToString()
+                if x.AssetClass:ToString() == "BlueprintGeneratedClass" and n:match("^NPC_") then
+                    local skip = false
+                    for _, pat in ipairs(CAT_SKIP) do if n:find(pat) then skip = true break end end
+                    if not skip then found[x.ObjectPath:ToString()] = n end
+                end
+            end)
+        end
+    end
+    local groups = {}
+    for path, n in pairs(found) do
+        local name = n:gsub("^NPC_", ""):gsub("_C$", "")
+        local fac
+        if path:find("/HVT/") then fac = "HVT"
+        else
+            local after = path:match("/Type/(.+)/[^/]+$")
+            if after then
+                after = after:gsub("^Blue/?", "")
+                fac = after:match("^([^/]+)")
+            end
+            fac = fac or name:match("^([A-Z][a-z]+)") or "Other"
+        end
+        fac = FACTION_NAMES[fac] or fac
+        groups[fac] = groups[fac] or {}
+        table.insert(groups[fac], { id = path, name = name:gsub("_", " ") })
+    end
+    local cat = {}
+    for fac, list in pairs(groups) do
+        table.sort(list, function(a, b) return a.name < b.name end)
+        table.insert(cat, { name = fac, list = list })
+    end
+    table.sort(cat, function(a, b) return a.name < b.name end)
+    S.cat = cat
+    local n = 0
+    for _, g in ipairs(cat) do n = n + #g.list end
+    log("enemy looks: " .. n .. " in " .. #cat .. " factions")
+    return cat
+end
+-- faction / variant index of a skin id (0, 0 = safehouse outfit)
+function S.lookIndex(id)
+    if not id or id == "" then return 0, 0 end
+    for fi, g in ipairs(S.catalog()) do
+        for vi, e in ipairs(g.list) do if e.id == id then return fi, vi end end
+    end
+    return 0, 0
+end
+S.badSkin = {}
 local function skinById(id)
+    if not id or id == "" or S.badSkin[id] then return nil end
     for _, k in ipairs(S.SKINS) do if k.id == id then return k end end
+    if id:find("/") then
+        for _, g in ipairs(S.catalog()) do
+            for _, e in ipairs(g.list) do if e.id == id then return { id = e.id, name = e.name, cls = e.id } end end
+        end
+        return { id = id, name = (id:match("NPC_([^%.]+)%.") or id), cls = id }
+    end
 end
 S.skinById = skinById
 S.costumes = {}       -- body full name -> { actor, id }
@@ -1899,6 +2016,7 @@ local function wearCostume(p, id)
     if not valid(a) then return false end
     pcall(function() a.AutoPossessAI = 0 end)          -- no AI controller
     pcall(function() a.bReplicates = false end)
+    pcall(function() a.bOnlyRelevantToOwner = true end)   -- no owner: never sent to anyone
     S.costumeSet[a:GetFullName()] = true
     GS:FinishSpawningActor(a, xf)
     pcall(function() a:SetActorEnableCollision(false) end)
@@ -1910,6 +2028,13 @@ local function wearCostume(p, id)
         local ok, own = pcall(function() return same(w.Owner, a) end)
         if ok and own then pcall(function() w:K2_DestroyActor() end) end
     end
+    local okSk, sameSk = pcall(function() return same(a.Mesh.SkeletalMesh.Skeleton, p.Mesh.SkeletalMesh.Skeleton) end)
+    if okSk and not sameSk then
+        log("enemy outfit " .. id .. ": other skeleton - not usable")
+        S.badSkin[id] = true
+        pcall(function() a:K2_DestroyActor() end)
+        return false
+    end
     -- its body onto the player's, following the player's pose
     pcall(function()
         a.Mesh:K2_AttachToComponent(p.Mesh, FName("None", EFindName.FNAME_Add), 2, 2, 2, false)
@@ -1920,6 +2045,193 @@ local function wearCostume(p, id)
     log("dressed " .. p:GetFName():ToString() .. " as " .. skin.name)
     return true
 end
+
+-- Look preview for the F4 menu: the chosen look on a slowly turning figure next to the panel.
+-- The figure stands where we stand but is visible ONLY to a scene-capture camera (not in the
+-- world); the camera renders just that figure into a texture shown by an Image in the menu.
+-- Enemy outfits: a tame NPC of that faction (like a costume). Safehouse look: our own full body
+-- (the shadow body's mesh with the clothes material the game made for us).
+S.preview = {}
+-- preview lights: offset from the figure (X towards the camera) and brightness; exposure bias of the camera
+S.pvTune = { lights = { { 380, 160, 110, 170000 }, { 380, -200, 20, 110000 }, { 420, 0, -40, 70000 },
+    { -260, 120, 150, 150000 }, { -260, -150, 60, 100000 } }, radius = 1500, bias = 0,
+    wall = { X = 0.15, Y = 0.15, Z = 0.16 } }
+local function spawnTameNPC(cls, loc)
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local xf = { Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Translation = loc, Scale3D = { X = 1, Y = 1, Z = 1 } }
+    local a = GS:BeginDeferredActorSpawnFromClass(world(), cls, xf, 1, nil)
+    if not valid(a) then return nil end
+    pcall(function() a.AutoPossessAI = 0 end)
+    pcall(function() a.bReplicates = false end)
+    pcall(function() a.bOnlyRelevantToOwner = true end)   -- no owner: never sent to anyone
+    S.costumeSet[a:GetFullName()] = true
+    GS:FinishSpawningActor(a, xf)
+    pcall(function() a:SetActorEnableCollision(false) end)
+    pcall(function() a.CharacterMovement:SetComponentTickEnabled(false) end)
+    pcall(function() a.CharacterMovement:SetMovementMode(0, 0) end)   -- no falling
+    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+        local ok, own = pcall(function() return same(w.Owner, a) end)
+        if ok and own then pcall(function() w:K2_DestroyActor() end) end
+    end
+    return a
+end
+
+local function previewFigure(skinId, loc)
+    local skin = skinById(skinId)
+    if skin then
+        local cls = loadObj(skin.cls)
+        return cls and spawnTameNPC(cls, loc) or nil
+    end
+    -- safehouse look: a plain skeletal mesh actor wearing our full body
+    local pc = localPC()
+    local pawn = S.joined and S.client and S.client.pawn or (valid(pc) and pc.Pawn)
+    if not valid(pawn) then return nil end
+    local a = world():SpawnActor(StaticFindObject("/Script/Engine.SkeletalMeshActor"), loc, { Pitch = 0, Yaw = 0, Roll = 0 })
+    if not valid(a) then return nil end
+    local m = a.SkeletalMeshComponent
+    local src = pawn.ShadowMesh
+    pcall(function() m:SetSkeletalMesh(src.SkeletalMesh, false) end)
+    -- customizable outfit: the legs body carries the clothes colours the game made for us
+    local useLegs = false
+    pcall(function() useLegs = pawn.MeshLegs:GetMaterial(0):GetClass():GetFName():ToString():find("Dynamic") ~= nil and same(pawn.MeshLegs.SkeletalMesh, src.SkeletalMesh) end)
+    local mats = useLegs and pawn.MeshLegs or src
+    for i = 0, mats:GetNumMaterials() - 1 do pcall(function() m:SetMaterial(i, mats:GetMaterial(i)) end) end
+    local drvCls = loadObj("/Game/Character/NPC/Human/Type/Blue/BadOil/Bandit/NPC_Bandit_AR1.NPC_Bandit_AR1_C")
+    local drv = drvCls and spawnTameNPC(drvCls, loc)
+    if valid(drv) then
+        for _, c in ipairs(drv:K2_GetComponentsByClass(StaticFindObject("/Script/Engine.PrimitiveComponent"))) do
+            c = c.get and c:get() or c
+            pcall(function() c:SetVisibleInSceneCaptureOnly(true) end)   -- not shown anywhere
+            pcall(function() c:SetCastShadow(false) end)
+        end
+        pcall(function() drv.Mesh.VisibilityBasedAnimTickOption = 0 end)
+        pcall(function() m:SetMasterPoseComponent(drv.Mesh, true) end)
+        S.preview.driver = drv
+    else
+        pcall(function() m:SetAnimInstanceClass(pawn.Mesh.AnimClass) end)
+    end
+    S.preview.zoff = -90   -- the mesh is the actor's root: feet at the actor's origin
+    return a
+end
+
+function S.previewDestroy()
+    local pv = S.preview
+    for _, k in ipairs({ "figure", "cam", "driver", "backdrop" }) do
+        if valid(pv[k]) then pcall(function() pv[k]:K2_DestroyActor() end) end
+        pv[k] = nil
+    end
+    for _, l in ipairs(pv.lights or {}) do
+        if valid(l.actor) then pcall(function() l.actor:K2_DestroyActor() end) end
+    end
+    pv.lights = {}
+    pv.skin = nil
+    if valid(pv.image) then pcall(function() pv.image:SetRenderOpacity(0) end) end
+end
+
+-- keep the preview in step with S.mySkin; called while the menu is open
+function S.previewUpdate(image)
+    local pv = S.preview
+    pv.image = image or pv.image
+    local pc = localPC()
+    if not valid(pc) or not valid(pc.Pawn) or not valid(pv.image) then return end
+    local want = S.mySkin or ""
+    if pv.skin ~= want or not valid(pv.figure) or not valid(pv.cam) then
+        S.previewDestroy()
+        pv.skin = want
+        pv.zoff = 0
+        local base = pc.Pawn:K2_GetActorLocation()
+        local figure = previewFigure(want, base)
+        if not figure then return end
+        local okSk, sameSk = pcall(function() return same(figure.Mesh.SkeletalMesh.Skeleton, pc.Pawn.Mesh.SkeletalMesh.Skeleton) end)
+        if want ~= "" and okSk and not sameSk then
+            S.badSkin[want] = true
+            pcall(function() figure:K2_DestroyActor() end)
+            return
+        end
+        -- only the preview camera sees it
+        for _, c in ipairs(figure:K2_GetComponentsByClass(StaticFindObject("/Script/Engine.PrimitiveComponent"))) do
+            c = c.get and c:get() or c
+            pcall(function() c:SetVisibleInSceneCaptureOnly(true) end)
+            pcall(function() c:SetCastShadow(false) end)
+            pcall(function() c:SetLightingChannels(true, true, false) end)
+            pcall(function() c.VisibilityBasedAnimTickOption = 0 end)
+        end
+        -- its own lights (key + fill + rim) on lighting channel 1: they light the figure, not the world
+        pv.lights = {}
+        for _, L in ipairs(S.pvTune.lights) do
+            pcall(function()
+                local la = world():SpawnActor(StaticFindObject("/Script/Engine.PointLight"), base, { Pitch = 0, Yaw = 0, Roll = 0 })
+                local lc = la.PointLightComponent
+                lc:SetMobility(2)   -- spawned lights are stationary: they would stay inside the figure
+                lc:SetLightingChannels(false, true, false)
+                lc:SetIntensity(L[4])
+                lc:SetAttenuationRadius(S.pvTune.radius)
+                lc:SetCastShadows(false)
+                table.insert(pv.lights, { actor = la, off = L })
+            end)
+        end
+        local KRL = StaticFindObject("/Script/Engine.Default__KismetRenderingLibrary")
+        pv.rt = pv.rt or KRL:CreateRenderTarget2D(world(), 300, 450, 2, { R = 0.02, G = 0.02, B = 0.02, A = 1 }, false)
+        local cam = world():SpawnActor(StaticFindObject("/Script/Engine.SceneCapture2D"), base, { Pitch = 0, Yaw = 0, Roll = 0 })
+        local cc = cam.CaptureComponent2D
+        cc.TextureTarget = pv.rt
+        cc.PrimitiveRenderMode = 2          -- show-only list
+        cc.CaptureSource = 2                -- final colour (LDR)
+        cc.bCaptureEveryFrame = true
+        cc.FOVAngle = 36
+        -- fixed exposure: the dark level around must not darken the picture
+        pcall(function()
+            local pp = cc.PostProcessSettings
+            pp.bOverride_AutoExposureMethod = true
+            pp.AutoExposureMethod = 0
+            pp.bOverride_AutoExposureMinBrightness = true
+            pp.AutoExposureMinBrightness = 1
+            pp.bOverride_AutoExposureMaxBrightness = true
+            pp.AutoExposureMaxBrightness = 1
+            pp.bOverride_AutoExposureBias = true
+            pp.AutoExposureBias = S.pvTune.bias
+            pp.bOverride_VignetteIntensity = true
+            pp.VignetteIntensity = 0
+            cc.PostProcessBlendWeight = 1
+        end)
+        cc:ShowOnlyActorComponents(figure, true)
+        pcall(function()
+            local bd = world():SpawnActor(StaticFindObject("/Script/Engine.StaticMeshActor"),
+                { X = base.X - 150, Y = base.Y, Z = base.Z + 5 }, { Pitch = 0, Yaw = 0, Roll = 0 })
+            local sm = bd.StaticMeshComponent
+            sm:SetMobility(2)
+            sm:SetStaticMesh(loadObj("/Engine/BasicShapes/Cube.Cube"))
+            bd:SetActorScale3D({ X = 0.05, Y = 6, Z = 7 })
+            bd:SetActorEnableCollision(false)
+            sm:SetVisibleInSceneCaptureOnly(true)
+            sm:SetCastShadow(false)
+            -- a plain unlit engine material: an even grey, the same for every look
+            local mat = loadObj("/Engine/EngineDebugMaterials/DebugMeshMaterial.DebugMeshMaterial")
+            if mat then sm:SetMaterial(0, mat) end
+            sm:SetVectorParameterValueOnMaterials(FName("Color", EFindName.FNAME_Add), S.pvTune.wall)
+            pv.backdrop = bd
+            cc:ShowOnlyActorComponents(bd, true)
+        end)
+        pv.figure, pv.cam, pv.base, pv.yaw = figure, cam, base, 200
+        pcall(function() pv.image:SetBrushResourceObject(pv.rt) end)
+        pcall(function() pv.image:SetRenderOpacity(1) end)
+    end
+end
+
+-- turn the figure slowly; the camera stays in front of it
+S.every(0, function(dt)
+    local pv = S.preview
+    if not valid(pv.figure) or not valid(pv.cam) then return end
+    pv.yaw = (pv.yaw + (dt or 30) * 0.045) % 360
+    local b = pv.base
+    pcall(function() pv.figure:K2_SetActorLocationAndRotation({ X = b.X, Y = b.Y, Z = b.Z + (pv.zoff or 0) }, { Pitch = 0, Yaw = pv.yaw, Roll = 0 }, false, {}, true) end)
+    pcall(function()
+        pv.cam:K2_SetActorLocationAndRotation({ X = b.X + 260, Y = b.Y, Z = b.Z + 5 }, { Pitch = -1, Yaw = 180, Roll = 0 }, false, {}, true)
+    end)
+    for _, l in ipairs(pv.lights or {}) do
+        pcall(function() l.actor:K2_SetActorLocation({ X = b.X + l.off[1], Y = b.Y + l.off[2], Z = b.Z + l.off[3] }, false, {}, true) end)
+    end
+end)
 
 local function wearLook(p)
     local look = S.looks[S.pidOf(p) or -2]
@@ -3032,8 +3344,7 @@ end
 
 ---------------------------------------------------------------------------
 -- Player-facing controls.
---   F5  host co-op on the selected arena      F6  join the host from config.txt
---   F7  leave co-op (back to the main menu)   F8  pick the next arena (for hosting)
+--   F4  the co-op menu: host, next arena, join, leave, look, network mode, Steam invite
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
@@ -3058,7 +3369,7 @@ local function saveConfig()
     f:write("join_ip=" .. cfg.join_ip .. "\n")
     f:write("# your name for other players (empty = your Steam name)\n")
     f:write("name=" .. cfg.name .. "\n")
-    f:write("# arena to host (F8 cycles through all arenas in game)\n")
+    f:write("# arena to host (F4 menu - NEXT ARENA cycles through all arenas)\n")
     f:write("map=" .. cfg.map .. "\n")
     f:write("# how other players look: player (what each picked in the safehouse) or 106 (Light 106 suit for all)\n")
     f:write("look=" .. tostring(cfg.look or "player") .. "\n")
@@ -3071,6 +3382,11 @@ saveConfig()
 S.cfg = cfg
 S.cfgModel = cfg.look
 S.mySkin = cfg.skin or ""
+-- v0.7.2 saved short ids ("mallcop"): use the class path now
+if S.mySkin ~= "" and not S.mySkin:find("/") then
+    S.mySkin = ""
+    for _, k in ipairs(S.SKINS or {}) do if k.id == cfg.skin then S.mySkin = k.cls end end
+end
 pcall(ensureEngineIni, cfg.net)
 S.bootNet, S.bootIniOk, S.bootDriver = S.netMode, S.iniOk, S.driverClass
 
@@ -3179,16 +3495,12 @@ local pending = nil
 local function onKey(action) pending = action end
 S.press = onKey   -- dev/tests: same as pressing a menu button ("host", "join", ...)
 pcall(function()
-    RegisterKeyBind(Key.F5, function() onKey("host") end)
-    RegisterKeyBind(Key.F6, function() onKey("join") end)
-    RegisterKeyBind(Key.F7, function() onKey("leave") end)
-    RegisterKeyBind(Key.F8, function() onKey("nextmap") end)
     RegisterKeyBind(Key.F4, function() onKey("menu") end)
 end)
 
 -- Also read the keys through the game's own input (works whenever the game gets the key).
 local keyState = {}
-local KEYS = { F4 = "menu", F5 = "host", F6 = "join", F7 = "leave", F8 = "nextmap" }
+local KEYS = { F4 = "menu" }
 local keyStructs = {}
 S.every(50, function()
     local pc = localPC()
@@ -3235,15 +3547,31 @@ S.every(100, function()
         S.switchNetMode()
     elseif action == "menu" then
         S.menuToggle()
-    elseif action == "nextlook" then
-        -- cycle: safehouse outfit -> each enemy outfit -> back
-        local list, idx = S.SKINS or {}, 0
-        for i, k in ipairs(list) do if k.id == S.mySkin then idx = i end end
-        idx = idx + 1
-        S.mySkin = (idx <= #list) and list[idx].id or ""
+    elseif action == "nextlook" or action == "facnext" or action == "facprev" or action == "varnext" or action == "varprev" then
+        -- faction 0 = safehouse outfit; factions 1..n each with their variants
+        local cat = S.catalog()
+        local fi, vi = S.lookIndex(S.mySkin)
+        local function pickFirstGood(f, v, step)
+            local list = cat[f].list
+            for _ = 1, #list do
+                if not S.badSkin[list[v].id] then return list[v].id end
+                v = (v - 1 + step) % #list + 1
+            end
+            return ""
+        end
+        if action == "facnext" or action == "nextlook" then
+            fi = (fi + 1) % (#cat + 1)
+            S.mySkin = fi > 0 and pickFirstGood(fi, 1, 1) or ""
+        elseif action == "facprev" then
+            fi = (fi - 1) % (#cat + 1)
+            S.mySkin = fi > 0 and pickFirstGood(fi, 1, 1) or ""
+        elseif fi > 0 then
+            local n = #cat[fi].list
+            local step = action == "varnext" and 1 or -1
+            S.mySkin = pickFirstGood(fi, (vi - 1 + step) % n + 1, step)
+        end
         cfg.skin = S.mySkin
         saveConfig()
-        S.notify("CO-OP: your look - " .. ((idx <= #list) and list[idx].name or "safehouse outfit"))
     elseif action == "invite" then
         S.steamInvite()
     elseif action == "nextmap" then
@@ -3254,7 +3582,7 @@ S.every(100, function()
         if idx > #list then idx = 1 end
         cfg.map = list[idx]
         saveConfig()
-        S.notify("CO-OP arena: " .. shortName(cfg.map) .. "  (" .. idx .. "/" .. #list .. ")  F5 = host")
+        S.notify("CO-OP arena: " .. shortName(cfg.map) .. "  (" .. idx .. "/" .. #list .. ")")
     end
 end)
 
@@ -3362,7 +3690,8 @@ end)
 -- Avoid VerticalBox/SetPadding/SetVisibility here: one of them crashed UE4SS.
 ---------------------------------------------------------------------------
 local menu = { open = false, n = 0, buttons = {} }
-local MENU_X, MENU_Y, MENU_W, MENU_SCALE = 60, 230, 760, 0.62
+local MENU_X, MENU_Y, MENU_W, MENU_SCALE = 60, 60, 760, 0.62
+local MENU_H = 1060   -- panel height incl. margins (widget units before scaling)
 
 local function mk(tree, cls, name)
     menu.n = menu.n + 1
@@ -3377,22 +3706,84 @@ local function place(root, w, x, y, sx, sy)
     return slot
 end
 
-local function label(tree, root, text, x, y, name)
+local function textStyle(t, size, r, g, b)
+    -- written before the widget is shown, so the Slate text is built with it
+    pcall(function() t.Font.Size = size end)
+    pcall(function() t.Font.TypefaceFontName = FName("Regular", EFindName.FNAME_Add) end)
+    pcall(function() t:SetColorAndOpacity({ SpecifiedColor = { R = r or 1, G = g or 1, B = b or 1, A = 1 }, ColorUseRule = 0 }) end)
+    pcall(function() t.Clipping = 1 end)   -- clip to its box: long names never spill out
+end
+
+local function setTextColor(t, r, g, b)
+    pcall(function() t:SetColorAndOpacity({ SpecifiedColor = { R = r, G = g, B = b, A = 1 }, ColorUseRule = 0 }) end)
+end
+
+local function box(tree, root, x, y, w, h, r, g, b, a, name)
+    local e = mk(tree, "Border", name or "Box")
+    e:SetBrushColor({ R = r, G = g, B = b, A = a })
+    place(root, e, x, y, w, h)
+    return e
+end
+
+-- a panel: thin grey edge around a dark see-through fill
+local function panel(tree, root, x, y, w, h)
+    box(tree, root, x, y, w, h, 0.6, 0.6, 0.6, 0.55, "Edge")
+    return box(tree, root, x + 2, y + 2, w - 4, h - 4, 0, 0, 0, 0.82, "Fill")
+end
+
+local function label(tree, root, text, x, y, name, size, w, grey, h)
     local t = mk(tree, "TextBlock", name or "Text")
     t:SetText(FText(text))
-    place(root, t, x, y)
+    local c = grey and 0.62 or 1
+    textStyle(t, size or 22, c, c, c)
+    place(root, t, x, y, w or MENU_W, h or ((size or 22) + 14))
     return t
 end
 
-local function button(tree, root, text, x, y, w, action)
-    local b = mk(tree, "Button", "Btn")
+-- section header: grey caps and a thin line under it
+local function section(tree, root, text, y)
+    label(tree, root, text, 0, y, "Sec", 18, MENU_W, true)
+    box(tree, root, 0, y + 30, MENU_W, 2, 0.6, 0.6, 0.6, 0.45, "Line")
+end
+
+local TILE_H = 58
+local function button(tree, root, text, x, y, w, action, h, center)
+    h = h or TILE_H
+    box(tree, root, x, y, w, h, 0.6, 0.6, 0.6, 0.55, "Edge")
+    local fill = box(tree, root, x + 2, y + 2, w - 4, h - 4, 0, 0, 0, 0.6, "Fill")
     local t = mk(tree, "TextBlock", "BtnText")
     t:SetText(FText(text))
-    b:SetContent(t)
-    pcall(function() b:SetBackgroundColor({ R = 0.9, G = 0.27, B = 0.17, A = 1.0 }) end)
-    place(root, b, x, y, w, 44)
-    table.insert(menu.buttons, { b = b, t = t, action = action, down = false })
-    return b, t
+    textStyle(t, 24)
+    if center then
+        place(root, t, x + (w - 16) / 2, y + (h - 36) / 2, w / 2, 36)
+    else
+        place(root, t, x + 20, y + (h - 36) / 2, w - 30, 36)
+    end
+    -- the clickable part: an invisible button over the tile
+    local bt = mk(tree, "Button", "Btn")
+    pcall(function() bt:SetBackgroundColor({ R = 1, G = 1, B = 1, A = 0 }) end)
+    place(root, bt, x, y, w, h)
+    local e = { b = bt, t = t, fill = fill, action = action, down = false, hot = false, enabled = true }
+    table.insert(menu.buttons, e)
+    return e
+end
+
+-- hover look (checked every frame for each tile)
+local function paintTile(e, hot)
+    if e.hot == hot and e.painted == e.enabled then return end
+    e.hot, e.painted = hot, e.enabled
+    pcall(function()
+        if not e.enabled then
+            e.fill:SetBrushColor({ R = 0, G = 0, B = 0, A = 0.3 })
+            setTextColor(e.t, 0.45, 0.45, 0.45)
+        elseif hot then
+            e.fill:SetBrushColor({ R = 0.8, G = 0.8, B = 0.8, A = 0.95 })
+            setTextColor(e.t, 0.02, 0.02, 0.02)
+        else
+            e.fill:SetBrushColor({ R = 0, G = 0, B = 0, A = 0.6 })
+            setTextColor(e.t, 1, 1, 1)
+        end
+    end)
 end
 
 local function menuLevelIsFrontEnd()
@@ -3416,33 +3807,53 @@ local function buildMenu()
     local root = tree.RootWidget
     menu.buttons = {}
     menu.slots = {}
-    local bg = mk(tree, "Border", "Bg")
-    bg:SetBrushColor({ R = 0.0, G = 0.0, B = 0.0, A = 0.93 })
-    place(root, bg, -30, -20, MENU_W + 60, 860)
-    label(tree, root, "TREPANG2 CO-OP  v" .. VERSION, 0, 0, "Title")
-    menu.status = label(tree, root, "", 0, 40, "Status")
-    button(tree, root, "HOST", 0, 120, 370, "host")
-    button(tree, root, "NEXT ARENA  >", 390, 120, 370, "nextmap")
-    menu.arena = label(tree, root, "", 0, 172, "Arena")
-    label(tree, root, "Join address (IP, or SteamID64 in Steam mode):", 0, 215, "JoinHint")
+    local W2 = (MENU_W - 10) / 2
+    panel(tree, root, -30, -24, MENU_W + 60, 1030)
+    label(tree, root, "TREPANG2 CO-OP", 0, 0, "Title", 34, MENU_W - 130)
+    label(tree, root, "v" .. VERSION, MENU_W - 110, 14, "Ver", 20, 110, true)
+    box(tree, root, 0, 52, MENU_W, 2, 0.6, 0.6, 0.6, 0.45, "Line")
+    menu.status = label(tree, root, "", 0, 64, "Status", 22)
+    button(tree, root, "HOST", 0, 106, W2, "host")
+    button(tree, root, "NEXT ARENA", W2 + 10, 106, W2, "nextmap")
+    menu.arena = label(tree, root, "", 0, 172, "Arena", 20, MENU_W, true)
+    label(tree, root, "JOIN ADDRESS  (IP, or SteamID64 in Steam mode)", 0, 206, "JoinHint", 18, MENU_W, true)
+    box(tree, root, 0, 238, 575, TILE_H, 0.6, 0.6, 0.6, 0.55, "Edge")
     local e = mk(tree, "EditableTextBox", "Addr")
     e:SetText(FText(cfg.join_ip or ""))
-    place(root, e, 0, 252, 580, 48)
+    place(root, e, 2, 240, 571, TILE_H - 4)
     menu.edit = e
-    button(tree, root, "JOIN", 600, 252, 160, "join")
-    button(tree, root, "LEAVE CO-OP", 0, 320, 370, "leave")
-    button(tree, root, "CLOSE  (F4)", 390, 320, 370, "close")
-    menu.players = label(tree, root, "", 0, 390, "Players")
-    menu.net = label(tree, root, "", 0, 545, "Net")
-    button(tree, root, "INVITE (STEAM)", 0, 590, 370, "invite")
-    button(tree, root, "SWITCH IP / STEAM", 390, 590, 370, "netmode")
-    menu.friends = label(tree, root, "", 0, 655, "Friends")
+    button(tree, root, "JOIN", 585, 238, MENU_W - 585, "join")
+    button(tree, root, "LEAVE CO-OP", 0, 306, W2, "leave")
+    button(tree, root, "CLOSE   F4", W2 + 10, 306, W2, "close")
+    section(tree, root, "PLAYERS", 384)
+    menu.players = label(tree, root, "", 0, 422, "Players", 22, MENU_W, false, 130)
+    section(tree, root, "NETWORK", 556)
+    menu.net = label(tree, root, "", 0, 594, "Net", 20, MENU_W, true)
+    button(tree, root, "INVITE  (STEAM)", 0, 628, W2, "invite")
+    button(tree, root, "IP / STEAM MODE", W2 + 10, 628, W2, "netmode")
+    menu.friends = label(tree, root, "", 0, 694, "Friends", 18, MENU_W, true)
     menu.fslots = {}
+    local fw = (MENU_W - 20) / 3
     for i = 1, 3 do
-        local b, t = button(tree, root, "", (i - 1) * 260, 700, 240, "friend" .. i)
-        menu.fslots[i] = { b = b, t = t }
+        menu.fslots[i] = button(tree, root, "", (i - 1) * (fw + 10), 724, fw, "friend" .. i, 48)
     end
-    menu.lookBtn, menu.lookText = button(tree, root, "LOOK", 0, 760, 760, "nextlook")
+    section(tree, root, "LOOK", 790)
+    button(tree, root, "<", 0, 828, 64, "facprev", nil, true)
+    menu.facTile = button(tree, root, "", 74, 828, MENU_W - 148, "facnext")
+    button(tree, root, ">", MENU_W - 64, 828, 64, "facnext", nil, true)
+    menu.varPrev = button(tree, root, "<", 0, 894, 64, "varprev", nil, true)
+    menu.varTile = button(tree, root, "", 74, 894, MENU_W - 148, "varnext")
+    menu.varNext = button(tree, root, ">", MENU_W - 64, 894, 64, "varnext", nil, true)
+    menu.lookHint = label(tree, root, "", 0, 962, "LookHint", 18, MENU_W, true)
+    -- look preview (left of the panel), same frame style
+    panel(tree, root, -400, -24, 350, 620)
+    menu.previewTitle = label(tree, root, "", -380, 0, "PreviewTitle", 24, 310)
+    menu.previewSub = label(tree, root, "", -380, 36, "PreviewSub", 18, 310, true)
+    box(tree, root, -380, 70, 310, 2, 0.6, 0.6, 0.6, 0.45, "Line")
+    menu.preview = mk(tree, "Image", "Preview")
+    place(root, menu.preview, -375, 84, 300, 450)
+    pcall(function() menu.preview:SetRenderOpacity(0) end)
+    label(tree, root, "how the others see you", -380, 548, "PreviewHint", 18, 310, true)
     -- the game's default font is big at 1080p-like UI scale: shrink the whole panel
     pcall(function() root:SetRenderTransformPivot({ X = 0, Y = 0 }) end)
     pcall(function() root:SetRenderScale({ X = MENU_SCALE, Y = MENU_SCALE }) end)
@@ -3469,9 +3880,17 @@ local function layoutMenu()
     local ok, x = pcall(function()
         local WLL = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
         local pc = localPC()
-        local sx = tonumber(WLL:GetViewportSize(pc).X) or 0
-        local k = (tonumber(WLL:GetViewportScale(pc)) or 1) * MENU_SCALE
-        if sx <= 0 or k <= 0 then return nil end
+        local size = WLL:GetViewportSize(pc)
+        local sx, sy = tonumber(size.X) or 0, tonumber(size.Y) or 0
+        local vs = tonumber(WLL:GetViewportScale(pc)) or 1
+        if sx <= 0 or sy <= 0 or vs <= 0 then return nil end
+        -- as big as MENU_SCALE allows, smaller when the screen is short
+        local scale = math.min(MENU_SCALE, (sy / vs) / (MENU_H + MENU_Y))
+        local k = vs * scale
+        if scale ~= menu.scale then
+            menu.scale = scale
+            pcall(function() menu.w.WidgetTree.RootWidget:SetRenderScale({ X = scale, Y = scale }) end)
+        end
         return math.floor(sx / k - (MENU_W + 30) - 20 / k)
     end)
     if not ok or not x or x == menu.x then return end
@@ -3486,23 +3905,23 @@ local function refreshMenu()
     layoutMenu()
     local status
     if S.hosting then
-        status = "HOSTING  " .. shortName(S.hostMap or cfg.map)
+        status = "HOSTING  -  " .. shortName(S.hostMap or cfg.map)
     elseif S.joined then
         status = netDriver() and ("CONNECTED  to " .. tostring(S.lastIP)) or ("CONNECTING  to " .. tostring(S.lastIP))
     else
-        status = "OFFLINE  -  host an arena or join a friend"
+        status = "OFFLINE  -  host a game or join a friend"
     end
     if S.iniOk == false then status = "RESTART THE GAME to apply network settings" end
     pcall(function() menu.status:SetText(FText(status)) end)
     local here = S.campaignLevel()
     local arenaHere = not S.hosting and S.hordeLevelHere() or nil
     pcall(function()
-        menu.arena:SetText(FText(arenaHere and ("HOST = this arena (" .. arenaHere .. ")")
-            or here and ("HOST = this level (" .. here .. "), from the last checkpoint")
-            or ("Arena to host: " .. shortName(cfg.map))))
+        menu.arena:SetText(FText(arenaHere and ("HOST starts this arena: " .. arenaHere)
+            or here and ("HOST restarts this level from the checkpoint: " .. here)
+            or ("HOST starts the Horde arena: " .. shortName(cfg.map))))
     end)
     local list = playerList()
-    pcall(function() menu.players:SetText(FText("Players (" .. #list .. "):\n  " .. table.concat(list, "\n  "))) end)
+    pcall(function() menu.players:SetText(FText(table.concat(list, "\n"))) end)
     local net
     if cfg.net ~= S.netMode then
         net = "Network: " .. cfg.net:upper() .. " after you restart the game"
@@ -3522,13 +3941,21 @@ local function refreshMenu()
     end
     pcall(function() menu.friends:SetText(FText(ftext)) end)
     local sk = S.skinById and S.skinById(S.mySkin or "")
-    pcall(function() menu.lookText:SetText(FText("LOOK: " .. (sk and sk.name or "safehouse outfit") .. "   >")) end)
+    local fi, vi = S.lookIndex(S.mySkin)
+    local cat = S.catalog()
+    local fname = fi > 0 and cat[fi].name or "Safehouse outfit"
+    pcall(function() menu.facTile.t:SetText(FText(fi > 0 and string.format("%s   %d/%d", fname:upper(), fi, #cat) or "YOUR OWN OUTFIT")) end)
+    pcall(function() menu.varTile.t:SetText(FText(fi > 0 and string.format("%s   %d/%d", (sk and sk.name or "?"):upper(), vi, #cat[fi].list) or "AS DRESSED IN THE SAFEHOUSE")) end)
+    menu.varTile.enabled, menu.varPrev.enabled, menu.varNext.enabled = fi > 0, fi > 0, fi > 0
+    pcall(function() menu.lookHint:SetText(FText(fi > 0 and "Enemy outfit - arrows change the faction and the variant"
+        or "Change it at the safehouse wardrobe, or press > for enemy outfits")) end)
+    pcall(function() menu.previewTitle:SetText(FText(fi > 0 and (sk and sk.name or ""):upper() or "YOUR OUTFIT")) end)
+    pcall(function() menu.previewSub:SetText(FText(fi > 0 and fname or "from the safehouse")) end)
+    pcall(function() S.previewUpdate(menu.preview) end)
     for i, slot in ipairs(menu.fslots or {}) do
         local h = hosts[i]
-        pcall(function()
-            slot.t:SetText(FText(h and h.name or ""))
-            slot.b:SetBackgroundColor(h and { R = 0.9, G = 0.27, B = 0.17, A = 1.0 } or { R = 0.2, G = 0.2, B = 0.2, A = 0.3 })
-        end)
+        pcall(function() slot.t:SetText(FText(h and h.name or "")) end)
+        slot.enabled = h ~= nil
     end
 end
 
@@ -3546,6 +3973,7 @@ local function setMenuInput(on)
 end
 
 function S.menuClose()
+    pcall(S.previewDestroy)
     if valid(menu.w) then pcall(function() menu.w:RemoveFromParent() end) end
     menu.w = nil
     if menu.open then setMenuInput(false) end
@@ -3554,7 +3982,7 @@ end
 
 function S.menuOpen()
     if menu.open and valid(menu.w) then return end
-    menu.x = nil
+    menu.x, menu.scale = nil, nil
     if not buildMenu() then log("menu: could not build") return end
     menu.open = true
     refreshMenu()
@@ -3571,7 +3999,9 @@ S.every(0, function()
     for _, e in ipairs(menu.buttons) do
         local ok, pressed = pcall(function() return e.b:IsPressed() end)
         pressed = ok and pressed or false
-        if e.down and not pressed then
+        local okh0, hov = pcall(function() return e.b:IsHovered() end)
+        paintTile(e, okh0 and hov and e.enabled or false)
+        if e.down and not pressed and e.enabled then
             local okh, hovered = pcall(function() return e.b:IsHovered() end)
             e.down = false
             if okh and hovered then

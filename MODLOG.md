@@ -284,6 +284,27 @@
     Мол-копы — `NPC_MallCop_*`; «TTMF» в файлах игры не найдено.
     **Баг 0.6.5–0.7.1:** saveConfig писал `cfg.model` (nil в новом конфиге) → мод падал при загрузке у новых
     установок. Исправлено (look/skin через tostring).
+46. **Каталог обликов и превью (v0.7.3).** `S.catalog()`: AssetRegistry `GetAssetsByPath` по /Game/Character/NPC,
+    /Game/Blueprint/HVT, /Game/AssetPack → классы `NPC_*` (фильтр CAT_SKIP), фракция = папка после /Type/.
+    ~328 вариантов, 30 фракций; id облика = путь класса. Скелет не как у игрока → `S.badSkin`.
+    TTMF = `NPC_GuardElite_NVG` / `NPC_Guard_NVG_SMG` (Horizon с ПНВ).
+    Превью: фигура (`SetVisibleInSceneCaptureOnly`) + `SceneCapture2D` (show-only список, FinalColorLDR) →
+    RT 300x450 → `Image:SetBrushResourceObject`. **Заспавненные PointLight — Stationary: двигать нельзя, они
+    оставались в центре фигуры** (светили изнутри → чёрная фигура с бликами). Нужен `SetMobility(2)`.
+    Свет на lighting channel 1 (фигура: каналы 0+1) ~100–170 тыс. Фон — куб 0.05x6x7 с
+    `/Engine/EngineDebugMaterials/DebugMeshMaterial` + `SetVectorParameterValueOnMaterials("Color", 0.15)`
+    (BasicShapeMaterial — клетка, параметра Color у него нет). Фигура «свой наряд» — SkeletalMeshActor, его
+    меш = корень (смещение по Z только через актёра); AnimBP игрока без игрока = Т-поза → берём позу
+    невидимого ручного NPC (`SetMasterPoseComponent`, `VisibilityBasedAnimTickOption=0`).
+47. **Меню F4 в стиле игры.** Плитки = Border (серый край) + Border (заливка) + TextBlock + прозрачный Button
+    поверх (клик/наведение опросом). Шрифт/цвет/клиппинг TextBlock пишем ДО AddToViewport (`t.Font.Size`,
+    `SetColorAndOpacity`, `Clipping=1`). Масштаб панели под высоту экрана в `layoutMenu`. F5–F8 убраны.
+48. **Враги у клиента в позе падения.** Реплицированные копии NPC приходят с `MovementMode=0` (None) →
+    AnimBP `IsOnGround=false`. Клиент раз в 0.5 с ставит живым (Health > 0) `SetMovementMode(1)`.
+49. **Индикатор гранат** — компонент `BP_CircleGrenadeIndicator` на КАЖДОМ PlayerBP рисует на наш экран.
+    Оставляем тик только у своей пешки (у чужих выключаем и чистим `PointDamageIndicators`).
+50. **Костюм хоста утекал клиенту** (bReplicates=false до Finish не помог) → `bOnlyRelevantToOwner=true`.
+    **Не править main.lua через PowerShell Get-Content/Set-Content** — читает UTF-8 как cp1250, ломает русские строки.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

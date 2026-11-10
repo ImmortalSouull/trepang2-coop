@@ -14,6 +14,10 @@ foreach ($t in $targets) {
   foreach ($m in $mods) {
     New-Item -ItemType Directory -Force "$t\$m\Scripts" | Out-Null
     Copy-Item "$proj\mod\$m\Scripts\*" "$t\$m\Scripts\" -Recurse -Force
+    # native helpers (locked while that game copy runs)
+    Get-ChildItem "$proj\mod\$m" -Filter *.dll | ForEach-Object {
+      try { Copy-Item $_.FullName "$t\$m\" -Force -ErrorAction Stop } catch { "warning: $($_.Exception.Message)" }
+    }
   }
   $txt = Get-Content "$t\mods.txt"
   foreach ($m in $mods) {

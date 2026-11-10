@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.5.0 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.5.1 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -30,6 +30,9 @@ Over the internet the host needs **UDP port 7777** open, or both players use Por
 
 **Steam mode (experimental):** switch it in the F4 menu (both players, then restart the game). The host's
 SteamID64 is shown in the menu; the friend types it as the join address. No port forwarding needed.
+Easier: the host presses **INVITE (STEAM)** in the F4 menu and picks the friend in the Steam overlay;
+the friend accepts the invite (or clicks "Join game" on the host in the Steam friends list, or the
+host's name under "Steam friends hosting" in the F4 menu) and joins automatically.
 Not yet tested between two different Steam accounts.
 
 ## Features

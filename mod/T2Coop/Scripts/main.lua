@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.5.0"
+local VERSION = "0.5.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1887,7 +1887,7 @@ S.every(100, function()
     pending = nil
     if action == "host" then
         if S.iniOk == false then S.notify("CO-OP: restart the game once (settings were just installed)") return end
-        S.notify("CO-OP: hosting " .. shortName(cfg.map) .. " (UDP 7777)")
+        S.notify("CO-OP: hosting " .. shortName(cfg.map) .. (S.netMode == "steam" and " - F4 to invite Steam friends" or " (UDP 7777)"))
         S.host(cfg.map)
     elseif action == "join" then
         loadConfig()
@@ -1900,6 +1900,8 @@ S.every(100, function()
         S.switchNetMode()
     elseif action == "menu" then
         S.menuToggle()
+    elseif action == "invite" then
+        S.steamInvite()
     elseif action == "nextmap" then
         local list = listArenas()
         if #list == 0 then S.notify("CO-OP: no arenas found") return end
@@ -1910,6 +1912,103 @@ S.every(100, function()
         saveConfig()
         S.notify("CO-OP arena: " .. shortName(cfg.map) .. "  (" .. idx .. "/" .. #list .. ")  F5 = host")
     end
+end)
+
+
+---------------------------------------------------------------------------
+-- Steam invites. t2coop_steam.dll (built by tools/build_steamdll.py) calls the game's own
+-- steam_api64.dll for us; commands and answers go through two files in %TMP%.
+-- The host sets the rich presence "connect" key = "-t2coopjoin=<SteamID64>": friends see
+-- "Join game" in Steam, the invite dialog sends it, and a game started from an invite gets it
+-- on its command line.
+---------------------------------------------------------------------------
+local steamLib, steamTried
+local TMPDIR = ((os.getenv("TMP") or os.getenv("TEMP") or "."):gsub("\\", "/"))
+local function steamCall(cmd)
+    if not steamTried then
+        steamTried = true
+        local ok, f = pcall(package.loadlib, "ue4ss/Mods/T2Coop/t2coop_steam.dll", "t2s_run")
+        if ok and type(f) == "function" then steamLib = f else log("steam helper not loaded: " .. tostring(f)) end
+    end
+    if not steamLib then return nil end
+    local h = io.open(TMPDIR .. "/t2coop_cmd.txt", "wb")
+    if not h then return nil end
+    h:write(cmd)
+    h:close()
+    os.remove(TMPDIR .. "/t2coop_out.txt")
+    if not pcall(steamLib) then return nil end
+    local o = io.open(TMPDIR .. "/t2coop_out.txt", "rb")
+    if not o then return nil end   -- Steam is not running
+    local out = o:read("a")
+    o:close()
+    return out
+end
+S.steamCall = steamCall
+
+local function connectString()
+    S.getMyName()
+    if not S.mySteamId then return nil end
+    return "-t2coopjoin=" .. S.mySteamId
+end
+
+-- friends whose game says "join me": { {name=, id=}, ... }
+S.steamHosts = {}
+function S.scanSteamFriends()
+    local out = steamCall("F")
+    local list = {}
+    for line in (out or ""):gmatch("[^\n]+") do
+        local name, id = line:match("^(.-)\t.-%-t2coopjoin=(%d+)")
+        if id then table.insert(list, { name = cleanName(name) or name, id = id }) end
+    end
+    S.steamHosts = list
+    return list
+end
+
+function S.steamInvite()
+    if S.netMode ~= "steam" then S.notify("CO-OP: invites work in Steam mode (F4 - switch network mode)") return end
+    if not S.hosting then S.notify("CO-OP: host an arena first, then invite") return end
+    local c = connectString()
+    if not c or steamCall("I" .. c) == nil then S.notify("CO-OP: Steam is not available") return end
+    S.notify("CO-OP: pick a friend in the Steam overlay (Shift+Tab)")
+end
+
+local function joinSteamHost(id, name)
+    if S.netMode ~= "steam" then
+        S.notify("CO-OP: " .. (name or "a friend") .. " invited you - switch to Steam mode (F4) and restart the game")
+        return
+    end
+    cfg.join_ip = id
+    saveConfig()
+    S.notify("CO-OP: joining " .. (name or id))
+    S.join(id)
+end
+S.joinSteamHost = joinSteamHost
+
+-- host: advertise the game while hosting in Steam mode; everyone: watch for accepted invites
+local presence = nil
+S.every(2000, function()
+    local want = (S.hosting and S.netMode == "steam") and connectString() or ""
+    if want ~= presence then
+        if steamCall("P" .. want) ~= nil then presence = want end
+    end
+end)
+S.every(1000, function()
+    if S.netMode ~= "steam" then return end
+    local out = steamCall("J")
+    local id = out and out:match("%-t2coopjoin=(%d+)")
+    if id and id ~= S.mySteamId then joinSteamHost(id) end
+end)
+
+-- the game was started from a Steam invite: join once the main menu is up
+local cmdLineChecked = false
+S.every(3000, function()
+    if cmdLineChecked or not valid(localPC()) then return end
+    cmdLineChecked = true
+    local ok, line = pcall(function()
+        return StaticFindObject("/Script/Engine.Default__KismetSystemLibrary"):GetCommandLine():ToString()
+    end)
+    local id = ok and line and line:match("%-t2coopjoin=(%d+)")
+    if id and id ~= S.mySteamId then joinSteamHost(id) end
 end)
 
 ---------------------------------------------------------------------------
@@ -1975,7 +2074,7 @@ local function buildMenu()
     menu.slots = {}
     local bg = mk(tree, "Border", "Bg")
     bg:SetBrushColor({ R = 0.0, G = 0.0, B = 0.0, A = 0.93 })
-    place(root, bg, -30, -20, MENU_W + 60, 680)
+    place(root, bg, -30, -20, MENU_W + 60, 800)
     label(tree, root, "TREPANG2 CO-OP  v" .. VERSION, 0, 0, "Title")
     menu.status = label(tree, root, "", 0, 40, "Status")
     button(tree, root, "HOST", 0, 120, 370, "host")
@@ -1991,7 +2090,14 @@ local function buildMenu()
     button(tree, root, "CLOSE  (F4)", 390, 320, 370, "close")
     menu.players = label(tree, root, "", 0, 390, "Players")
     menu.net = label(tree, root, "", 0, 545, "Net")
-    button(tree, root, "SWITCH NETWORK MODE (IP / STEAM)", 0, 590, 760, "netmode")
+    button(tree, root, "INVITE (STEAM)", 0, 590, 370, "invite")
+    button(tree, root, "SWITCH IP / STEAM", 390, 590, 370, "netmode")
+    menu.friends = label(tree, root, "", 0, 655, "Friends")
+    menu.fslots = {}
+    for i = 1, 3 do
+        local b, t = button(tree, root, "", (i - 1) * 260, 700, 240, "friend" .. i)
+        menu.fslots[i] = { b = b, t = t }
+    end
     -- the game's default font is big at 1080p-like UI scale: shrink the whole panel
     pcall(function() root:SetRenderTransformPivot({ X = 0, Y = 0 }) end)
     pcall(function() root:SetRenderScale({ X = MENU_SCALE, Y = MENU_SCALE }) end)
@@ -2055,6 +2161,22 @@ local function refreshMenu()
         net = "IP mode  -  host needs UDP port 7777 open"
     end
     pcall(function() menu.net:SetText(FText(net)) end)
+    -- Steam friends hosting co-op right now
+    local hosts = S.steamHosts or {}
+    local ftext
+    if S.netMode ~= "steam" then
+        ftext = "Steam friends hosting: Steam mode only"
+    else
+        ftext = #hosts == 0 and "Steam friends hosting: none yet" or "Steam friends hosting - click to join:"
+    end
+    pcall(function() menu.friends:SetText(FText(ftext)) end)
+    for i, slot in ipairs(menu.fslots or {}) do
+        local h = hosts[i]
+        pcall(function()
+            slot.t:SetText(FText(h and h.name or ""))
+            slot.b:SetBackgroundColor(h and { R = 0.9, G = 0.27, B = 0.17, A = 1.0 } or { R = 0.2, G = 0.2, B = 0.2, A = 0.3 })
+        end)
+    end
 end
 
 local function setMenuInput(on)
@@ -2109,6 +2231,12 @@ S.every(0, function()
                     text = okt and text:gsub("%s", "") or ""
                     if text ~= "" then cfg.join_ip = text; saveConfig() end
                 end
+                local fi = tonumber(e.action:match("^friend(%d)$") or "")
+                if fi then
+                    local h = (S.steamHosts or {})[fi]
+                    if h then S.menuClose(); joinSteamHost(h.id, h.name) end
+                    return
+                end
                 if e.action == "host" or e.action == "join" or e.action == "leave" then S.menuClose() end
                 onKey(e.action)
                 return
@@ -2119,5 +2247,6 @@ S.every(0, function()
 end)
 
 S.every(250, function() if menu.open then refreshMenu() end end)
+S.every(2000, function() if menu.open and S.netMode == "steam" then S.scanSteamFriends() end end)
 
 log("v" .. VERSION .. " loaded")

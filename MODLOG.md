@@ -140,6 +140,17 @@
     (`IsPressed` → отпущена над кнопкой = клик). Размер экрана сразу после заставки = 0 — позицию
     пересчитываем при каждом обновлении. Масштаб — `SetRenderScale` корня.
 
+31. **Steam API из Lua.** Сессии движка (Create/Find/JoinSession proxy) отдают результат только через
+    делегаты — из Lua не получить. Вместо них `t2coop_steam.dll`: собирается `tools/build_steamdll.py`
+    (сам ассемблирует x64 и пишет PE — компилятора на машине нет, ставить нельзя). Lua грузит её через
+    `package.loadlib` (есть в UE4SS), экспорт `t2s_run` берёт команду из `%TMP%/t2coop_cmd.txt` и пишет
+    ответ в `t2coop_out.txt`; Lua C API из UE4SS не экспортирован, поэтому через файлы. Steam доступен
+    и в IP-режиме (Null). Игра крутит `SteamAPI_RunCallbacks` (не manual dispatch) — колбэк
+    `GameRichPresenceJoinRequested_t` (337) регистрируем сами. Rich presence `connect` =
+    `-t2coopjoin=<SteamID64>` (с минусом: строка без минуса в командной строке UE — это URL карты).
+    Оверлей Steam есть только если игру запустил Steam (`steam://rungameid/1164940`), не exe напрямую.
+    В строке путей Lua `\t` — это табуляция: пути к TMP писать через `/`.
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

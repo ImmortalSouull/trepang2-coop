@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde Mode) - Beta
 
 ## Version
-0.5.0
+0.5.1
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -49,7 +49,7 @@ the UE4SS mod loader (included) and the mod.
 [size=4][b]Playing over the internet[/b][/size]
 The host needs [b]UDP port 7777[/b] open on the router, or both players use a virtual LAN such as
 Porthole, Radmin VPN or ZeroTier. The friend types the host's IP in the F4 menu and clicks Join.
-[b]Steam mode (experimental)[/b]: no port forwarding - both switch it in the F4 menu and restart the game, the friend joins with the host's SteamID64 shown in the menu.
+[b]Steam mode (experimental)[/b]: no port forwarding - both switch it in the F4 menu and restart the game. The host presses [b]Invite (Steam)[/b] in the F4 menu and picks the friend in the Steam overlay; the friend accepts and joins automatically (or uses "Join game" in the Steam friends list, or types the host's SteamID64).
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
@@ -82,5 +82,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.5.0.zip  (name: "Trepang2 Co-op v0.5.0 (beta)")
+- Main file: dist/Trepang2-Coop-v0.5.1.zip  (name: "Trepang2 Co-op v0.5.1 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

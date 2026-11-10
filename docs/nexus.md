@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.6.5
+0.7.0
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -27,7 +27,7 @@ everything the game is missing for two (or more) players to fight the [b]Horde /
 [list]
 [*]In-game co-op menu (F4): host any Horde arena (also custom maps - load the map, press HOST), type the friend's address and join, leave, player list
 [*][b]Campaign (early)[/b]: in the safehouse or a mission the host presses F4 - HOST, friends join and follow the host through
-mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host
+mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host; cutscenes play for everyone at once (partners are not written into them), radio and dialogue lines with subtitles are heard by all, doors locked/unlocked by the story match for everyone
 [*][b]Your look is shared[/b]: each player appears exactly as they dressed in the safehouse (outfit - 106, Patriarch, 107... - and jacket, gloves, pants, shoes colours and camo); partners are fully animated: walk, sprint, crouch, slide, jump,
 aiming up/down, weapon grip, dual wielding; their shots are seen and heard
 [*]Player names (Steam) over partner markers, "joined" / "left" notices
@@ -59,7 +59,7 @@ Porthole, Radmin VPN or ZeroTier. The friend types the host's IP in the F4 menu 
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
-[*]Campaign: cutscenes and some scripted scenes are not synced yet (planned for v0.7); after a level change friends reconnect in ~30-40 s
+[*]Campaign: hostages, terminals/hacking and objective markers are not synced yet; after a level change friends reconnect in ~30-40 s
 [*]Partner reload and ground melee strike are not shown on their body
 [*]Fire / incendiary damage from the partner is not synced yet
 [*]Ammo / health pickups are separate for each player
@@ -89,5 +89,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.6.5.zip  (name: "Trepang2 Co-op v0.6.5 (beta)")
+- Main file: dist/Trepang2-Coop-v0.7.0.zip  (name: "Trepang2 Co-op v0.7.0 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

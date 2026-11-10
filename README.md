@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.6.5 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.7.0 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -39,7 +39,9 @@ Not yet tested between two different Steam accounts.
 Play the campaign as usual; in the safehouse or in a mission the host presses **F4 → HOST** (the level
 reloads from the last checkpoint with the server on) and the friend joins. Wherever the host's game goes
 (mission start, next level, checkpoint, restart) friends follow automatically. Story triggers are shared,
-enemy squads come from the host, everyone down = back to the last checkpoint. Cutscenes are not synced yet.
+enemy squads come from the host, everyone down = back to the last checkpoint. Since v0.7 cutscenes play for
+everyone at the same time, radio/dialogue lines with subtitles are heard by all, and doors the host's story
+unlocks are unlocked for everyone.
 
 ## Features
 - Each player plays their own full character; enemies, waves and money run on the host.

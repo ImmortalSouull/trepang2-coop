@@ -35,6 +35,9 @@ Talk to the user in Russian. The user plays with a friend; previous project: ZER
 - Ask the user before publishing anything (GitHub/Nexus).
 - Campaign tests overwrite the user's real campaign save (`%LOCALAPPDATA%\CPPFPS\Saved\SaveGames`):
   back it up to `C:\Users\PC\Trepang2_SaveBackup\` before, restore after (games closed).
+  Outfit / clothes customization in the settings save may be changed freely (user's OK, 2026-11-10).
+- Nexus: the user logs into nexusmods.com in the built-in browser when home; then upload every version
+  missing there (Nexus is at 0.4.1) and the text from `docs/nexus.md`.
 - No `RegisterBeginPlayPostHook` (Lua on every actor's BeginPlay crashed the host on campaign maps);
   UE4SS's stock `CheatManagerEnablerMod` stays off (deploy/installer do it).
 - `tools/test_campaign.ps1` (host a campaign map, join, game-driven travel) and

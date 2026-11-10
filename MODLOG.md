@@ -247,6 +247,24 @@
     сохранение настроек — тесты одежды затирают настройки пользователя (восстанавливать из бэкапа).
     config `look=player|106`.
 
+41. **Катсцены.** Запускает только игровой режим хоста (`BaseGameMode_C`: `Prepare and Play Cutscene`,
+    `PlayLevelCutscene(seq, t)` → `CurrentCutscene` = ULevelSequencePlayer, Outer = `LevelSequenceActor`).
+    У клиента GameMode нет → свои катсцены не начинаются. Хост 2 раза/с шлёт `CS|имя актёра|секунда`
+    (время: `GetCurrentTime()` → (FrameNumber+SubFrame)*Den/Num), `CE` в конце. Клиент: свой
+    LevelSequenceActor с тем же именем, `JumpToSeconds`+`Play`, поправка при расхождении > 0.6 с;
+    прячет всех игроков (и себя), выключает ввод (`SetIgnoreMove/LookInput`) и HUD (RenderOpacity),
+    в конце `GoToEndAndStop`, `ResetIgnoreInputFlags`, `SetViewTargetWithBlend(pawn)`; хост переставляет
+    клиентов рядом (S.known = {}). Пока катсцена — у клиента не удаляем «локальных NPC» (спаунаблы).
+    Расхождение по времени ~0.1 с. Тест: `tools/cutscene_test.ps1` (кадры хост/гость рядом).
+42. **Диалоги** — `BP_ScriptedDialogueActor_C` (массив `ScriptedConversation` из FFScriptedDialogueLineInfo:
+    Line_2_..(Sound_6_.., SubtitleFile_12_.., Speaker_3_..), FallbackLines_5_..). Флаги Started/Finished ставит
+    внешнее событие, поэтому «идёт реплика» = играет `CurrentSpeakingAudioComp`. Хост шлёт `DL|имя|строка|
+    fallback|radio или точка говорящего`, клиент `SpeakLine(speaker, line, fb, 0, sound, subtitle)` своей копией
+    (радио: speaker = сам актёр → окно рации + субтитр как у хоста). У клиента коллизия `TriggerColl`
+    диалогов-триггеров выключена. Если говорящего нет, игра пропускает реплики мгновенно.
+43. **Двери** — `ABaseDoorActor` (`bIsLocked`, `bIsOpen`, `LockDoor/UnlockDoor/OpenDoor(front)`, BP `BP_BaseDoorNew_C`).
+    Хост шлёт `DO|имя|locked|open|сторона` при изменении и все запертые/открытые новичку.
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.6.5"
+local VERSION = "0.7.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -218,6 +218,7 @@ local function setupRemotePlayers()
                 S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", hl.X + off, hl.Y, hl.Z + 20), string.format("%.1f", hr.Yaw))
                 log("placed " .. pawn:GetFName():ToString() .. " for " .. pc:GetFName():ToString())
                 if S.sendCampaignState then pcall(S.sendCampaignState, pc) end
+                if S.sendDoors then pcall(S.sendDoors, pc) end
             end
         end
     end
@@ -558,6 +559,9 @@ RegisterLoadMapPreHook(function()
     S.myGrenades = {}
     S.trigSeen = {}
     S.trQueue, S.trReadyAt = {}, nil
+    if S.cut then S.cut = { active = false } end
+    S.dlgSeen = {}
+    S.doorSeen = {}
     if S.me then S.me.down, S.me.max = false, nil end
     S.downed = {}
     -- UE4SS crashed inside Lua right after some map loads (host side, ~1 in 4): most likely the Lua
@@ -2383,6 +2387,8 @@ end
 -- something local) would be a ghost the host never sees - remove it.
 S.every(500, function()
     if not S.joined or not netDriver() then return end
+    -- cutscenes spawn their own local actors (characters too): leave everything alone meanwhile
+    if S.cut and (S.cut.active or os.clock() - (S.cut.endedAt or -99) < 5) then return end
     local playerCls = classOf("/Script/CPPFPS.BasePlayer")
     for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
         -- (not the helicopters' AI "bullseye" targets: their owner keeps using them, removing one
@@ -2393,6 +2399,271 @@ S.every(500, function()
         end
     end
 end)
+
+---------------------------------------------------------------------------
+-- Cutscenes. Only the host has the game mode that starts them (BaseGameMode_C: "Prepare and Play
+-- Cutscene" -> CurrentCutscene). The sequences themselves are level actors (LevelSequenceActor) that
+-- every machine has under the same name. The host tells clients which one is playing and where it
+-- is ("CS|name|seconds", twice a second); a client plays its own copy in step with the host, with
+-- every player hidden (the partner is not written into the scene), its controls and HUD off. When
+-- the host's cutscene ends ("CE"), clients finish theirs and the host puts them next to itself.
+---------------------------------------------------------------------------
+local function seqSeconds(player, getter)
+    local ok, t = pcall(function()
+        local q = player[getter](player)
+        return (q.Time.FrameNumber.Value + q.Time.SubFrame) * q.Rate.Denominator / q.Rate.Numerator
+    end)
+    return ok and t or nil
+end
+local function hostCutscene()
+    local gm = FindFirstOf("BaseGameMode_C")
+    if not valid(gm) then return nil end
+    local cur = gm.CurrentCutscene
+    if not valid(cur) or not cur:IsPlaying() then return nil end
+    local actor = cur:GetOuter()
+    if not valid(actor) then return nil end
+    return actor:GetFName():ToString(), seqSeconds(cur, "GetCurrentTime") or 0
+end
+
+-- every other player's body hidden (host: partners' puppets; client: everyone incl. our own pawn)
+local function hidePlayersForCutscene(hide)
+    for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        local mine = S.hosting and same(p, localPC() and localPC().Pawn)
+        local puppet = S.joined and S.client and same(p, S.client.puppet)
+        if not mine and not puppet and valid(p.PlayerState) then
+            pcall(function() p:SetActorHiddenInGame(hide) end)
+            local w = p.CurrentWeapon
+            if valid(w) then pcall(function() w:SetActorHiddenInGame(hide) end) end
+        end
+    end
+    for _, e in pairs(S.bodies or {}) do
+        if e.dualGun then pcall(function() e.dualGun:SetActorHiddenInGame(hide) end) end
+    end
+end
+
+S.cut = { active = false }
+-- host side
+S.every(250, function()
+    if not S.hosting or not netDriver() then return end
+    local name, t = hostCutscene()
+    local c = S.cut
+    if name then
+        if not c.active or c.name ~= name then
+            c.active, c.name, c.sentAt = true, name, 0
+            log("cutscene " .. name .. " - shown to everyone")
+            hidePlayersForCutscene(true)
+        end
+        if os.clock() - c.sentAt >= 0.5 then
+            c.sentAt = os.clock()
+            S.toClients("CS", name, string.format("%.2f", t))
+        end
+        hidePlayersForCutscene(true)   -- puppets that (re)appear meanwhile
+    elseif c.active then
+        c.active, c.endedAt = false, os.clock()
+        S.toClients("CE", c.name or "")
+        hidePlayersForCutscene(false)
+        log("cutscene " .. tostring(c.name) .. " ended")
+        -- the game may have moved us for the next scene: bring everyone over a moment later
+        S.every(700, function()
+            S.known = {}
+            S.spawnIndex = 0
+            return true
+        end)
+    end
+end)
+
+-- client side
+local function clientCutsceneMode(on)
+    local pc = localPC()
+    local pawn = S.client and S.client.pawn
+    pcall(function()
+        if on then pc:SetIgnoreMoveInput(true); pc:SetIgnoreLookInput(true) else pc:ResetIgnoreInputFlags() end
+    end)
+    if valid(pawn) then
+        pcall(function() pawn:SetActorHiddenInGame(on) end)
+        pcall(function() local w = pawn.CurrentWeapon; if valid(w) then w:SetActorHiddenInGame(on) end end)
+        pcall(function() pawn:SetInvulnerableState(on or S.devGod or false) end)
+        pcall(function() pawn.PlayerHud:SetRenderOpacity(on and 0 or 1) end)
+    end
+    hidePlayersForCutscene(on)
+    if not on and valid(pawn) then
+        pcall(function() pc:SetViewTargetWithBlend(pawn, 0.3, 0, 0, false) end)
+    end
+end
+local function findSequence(name)
+    for _, a in ipairs(FindAllOf("LevelSequenceActor") or {}) do
+        if valid(a) and a:GetFName():ToString() == name then return a end
+    end
+end
+handlers.client["CS"] = function(_, p)
+    local name, t = p[1], tonumber(p[2]) or 0
+    local c = S.cut
+    local actor = findSequence(name)
+    if not actor or not valid(actor.SequencePlayer) then
+        if c.missing ~= name then c.missing = name; log("cutscene " .. tostring(name) .. " not loaded here") end
+        return
+    end
+    local player = actor.SequencePlayer
+    if not c.active or c.name ~= name then
+        c.active, c.name, c.player = true, name, player
+        clientCutsceneMode(true)
+        pcall(function() player:JumpToSeconds(t) end)
+        pcall(function() player:Play() end)
+        log("cutscene " .. name .. " from " .. string.format("%.1f", t) .. " s")
+    else
+        if not player:IsPlaying() then pcall(function() player:Play() end) end
+        local mine = seqSeconds(player, "GetCurrentTime")
+        if mine and math.abs(mine - t) > 0.6 then pcall(function() player:JumpToSeconds(t) end) end
+    end
+    c.lastMsg = os.clock()
+    hidePlayersForCutscene(true)
+end
+local function endClientCutscene()
+    local c = S.cut
+    if not c.active then return end
+    c.active, c.endedAt = false, os.clock()
+    pcall(function() if valid(c.player) and c.player:IsPlaying() then c.player:GoToEndAndStop() end end)
+    clientCutsceneMode(false)
+    log("cutscene " .. tostring(c.name) .. " ended")
+end
+handlers.client["CE"] = function() endClientCutscene() end
+-- lost the host mid-cutscene (or a missed "CE"): don't stay stuck in it
+S.every(1000, function()
+    local c = S.cut
+    if S.joined and c.active and os.clock() - (c.lastMsg or 0) > 3 then endClientCutscene() end
+end)
+
+---------------------------------------------------------------------------
+-- Scripted dialogue (radio chatter and lines during missions): BP_ScriptedDialogueActor_C level
+-- actors, same names everywhere, each a list of lines (sound + subtitle + speaker). The host's
+-- copies run the story; the host reports every line it starts ("DL|name|line|fallback") and when
+-- a dialogue is over ("DF|name"). Clients play that line with their own copy (sound + subtitle);
+-- their copies never start by themselves, so nothing is heard twice.
+---------------------------------------------------------------------------
+local DIALOGUE_CLASS = "BP_ScriptedDialogueActor_C"
+local LINE_KEY = "Line_2_85F150E843D8D013D565129435324EE4"
+local FALLBACK_KEY = "FallbackLines_5_DF5F8B254196DD2CF756F08574DB356A"
+local SOUND_KEY = "Sound_6_EBA04BD14157F792FE918CBBED186C6F"
+local SUBTITLE_KEY = "SubtitleFile_12_F2D285D44B3C1D1F6289718EBB5350F0"
+S.dlgSeen = {}
+
+-- a line is "on" while the actor's speaking audio plays (its started/finished flags are set by
+-- the outer start event and miss lines started directly)
+S.every(150, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    for _, a in ipairs(FindAllOf(DIALOGUE_CLASS) or {}) do
+        if valid(a) then
+            local name = a:GetFName():ToString()
+            local seen = S.dlgSeen[name] or {}
+            local speaking = false
+            pcall(function() speaking = valid(a.CurrentSpeakingAudioComp) and a.CurrentSpeakingAudioComp:IsPlaying() end)
+            local line, fb = a.CurrentDialogueLineElement, a.FallbackLineElement
+            if speaking and (seen.line ~= line or seen.fb ~= fb or not seen.speaking) then
+                -- who speaks: the dialogue actor itself (radio) or a character (sent by position)
+                local who = "radio"
+                pcall(function()
+                    local sp = a.CurrentSpeaker
+                    if valid(sp) and not same(sp, a) then who = fmtVec(sp:K2_GetActorLocation()) end
+                end)
+                S.toClients("DL", name, line, fb, who)
+                S.stats.dlgSent = (S.stats.dlgSent or 0) + 1
+            elseif not speaking and seen.speaking and a.FinishedPlaying then
+                S.toClients("DF", name)
+            end
+            seen.line, seen.fb, seen.speaking = line, fb, speaking
+            S.dlgSeen[name] = seen
+        end
+    end
+end)
+
+local function findDialogue(name)
+    for _, a in ipairs(FindAllOf(DIALOGUE_CLASS) or {}) do
+        if valid(a) and a:GetFName():ToString() == name then return a end
+    end
+end
+-- the n-th (0-based) element of a TArray
+local function arrayAt(arr, n)
+    local found
+    pcall(function() arr:ForEach(function(i, el) if i - 1 == n then found = el:get() end end) end)
+    return found
+end
+handlers.client["DL"] = function(_, p)
+    local a = findDialogue(p[1] or "")
+    local line, fb = tonumber(p[2]) or 0, tonumber(p[3]) or -1
+    if not a then return end
+    local info = arrayAt(a.ScriptedConversation, line)
+    if not info then return end
+    local l = info[LINE_KEY]
+    if fb >= 0 then l = arrayAt(info[FALLBACK_KEY], fb) or l end
+    local sound, subtitle = l[SOUND_KEY], l[SUBTITLE_KEY]
+    local speaker = a                                        -- radio: the dialogue actor itself
+    if p[4] and p[4] ~= "radio" then
+        local at = vec(p, 4)
+        speaker = nearestNPC(at, 400) or a
+    end
+    a.StartedPlaying, a.FinishedPlaying = true, false
+    local ok, err = pcall(function() a:SpeakLine(speaker, line, fb, 0.0, sound, subtitle) end)
+    log("dialogue " .. p[1] .. " line " .. line .. (ok and "" or (" failed: " .. tostring(err))))
+end
+handlers.client["DF"] = function(_, p)
+    local a = findDialogue(p[1] or "")
+    if a then a.FinishedPlaying = true end
+end
+-- client: dialogue actors that start when walked into stay quiet here (the host's start them)
+S.every(1000, function()
+    if not S.joined or not netDriver() then return end
+    for _, a in ipairs(FindAllOf(DIALOGUE_CLASS) or {}) do
+        if valid(a) and a.MakeThisATrigger then
+            pcall(function() if a.TriggerColl:GetCollisionEnabled() ~= 0 then a.TriggerColl:SetCollisionEnabled(0) end end)
+        end
+    end
+end)
+
+---------------------------------------------------------------------------
+-- Doors (ABaseDoorActor: bIsLocked, bIsOpen). The host's story scripts lock and unlock doors; a
+-- client's copy would stay locked and block the way. Host -> clients: "DO|name|locked|open|side"
+-- on every change (and for all doors to a newcomer). A client unlocks/locks its copy to match and
+-- opens it when the host's opens. Doors a client opens itself stay its own business.
+---------------------------------------------------------------------------
+local DOOR_CLASS = "/Script/CPPFPS.BaseDoorActor"
+S.doorSeen = {}
+local function doorState(d)
+    local side = 1
+    pcall(function() if d.DoorMesh.RelativeRotation.Yaw < 0 then side = 0 end end)
+    return (d.bIsLocked and 1 or 0), (d.bIsOpen and 1 or 0), side
+end
+S.every(500, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    for _, d in ipairs(S.allOf(DOOR_CLASS)) do
+        local name = d:GetFName():ToString()
+        local l, o, side = doorState(d)
+        local key = l .. o
+        local was = S.doorSeen[name]
+        if was == nil then
+            S.doorSeen[name] = key
+        elseif was ~= key then
+            S.doorSeen[name] = key
+            S.toClients("DO", name, l, o, side)
+        end
+    end
+end)
+function S.sendDoors(pc)
+    for _, d in ipairs(S.allOf(DOOR_CLASS)) do
+        local l, o, side = doorState(d)
+        if l == 1 or o == 1 then S.toClient(pc, "DO", d:GetFName():ToString(), l, o, side) end
+    end
+end
+handlers.client["DO"] = function(_, p)
+    local name, locked, open, side = p[1], p[2] == "1", p[3] == "1", p[4] == "1"
+    for _, d in ipairs(S.allOf(DOOR_CLASS)) do
+        if d:GetFName():ToString() == name then
+            if locked and not d.bIsLocked then pcall(function() d:LockDoor() end)
+            elseif not locked and d.bIsLocked then pcall(function() d:UnlockDoor() end) end
+            if open and not d.bIsOpen and not locked then pcall(function() d:OpenDoor(side) end) end
+            return
+        end
+    end
+end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)

@@ -11,6 +11,7 @@ local function pc()
 end
 
 local KSL
+local gcOffUntil = nil   -- Lua GC is off from a map change until this time
 local function console(cmd)
     KSL = KSL or StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
     local p = pc()
@@ -65,13 +66,16 @@ hookTick()
 if LoopInGameThreadWithDelay then
     LoopInGameThreadWithDelay(500, function()
         if not hooked then hookTick() end
+        if gcOffUntil and os.time() >= gcOffUntil then gcOffUntil = nil; collectgarbage("restart") end
         if os.time() - lastWall >= 1 then poll() end
     end)
 end
 pcall(function() RegisterLoadMapPostHook(function() hookTick() end) end)
 
+-- same as T2Coop: no Lua GC across a map change (finalizers vs. the torn-down world)
+pcall(function() RegisterLoadMapPreHook(function() collectgarbage("collect"); collectgarbage("stop"); gcOffUntil = math.huge end) end)
 pcall(function()
-    RegisterLoadMapPostHook(function() log("map loaded") end)
+    RegisterLoadMapPostHook(function() log("map loaded"); gcOffUntil = os.time() + 3 end)
     RegisterHook("/Script/Engine.GameInstance:HandleTravelError", function(self, t) log("TRAVEL ERROR " .. tostring(t:get())) end)
     RegisterHook("/Script/Engine.GameInstance:HandleNetworkError", function(self, t, s) log("NETWORK ERROR " .. tostring(t:get())) end)
 end)

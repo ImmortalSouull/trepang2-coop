@@ -33,6 +33,12 @@ Talk to the user in Russian. The user plays with a friend; previous project: ZER
 - Keyboard input can't be faked into an unfocused window for UE4SS keybinds; the mod also polls
   keys via `PlayerController:IsInputKeyDown`, which PostMessage does reach.
 - Ask the user before publishing anything (GitHub/Nexus).
+- Campaign tests overwrite the user's real campaign save (`%LOCALAPPDATA%\CPPFPS\Saved\SaveGames`):
+  back it up to `C:\Users\PC\Trepang2_SaveBackup\` before, restore after (games closed).
+- No `RegisterBeginPlayPostHook` (Lua on every actor's BeginPlay crashed the host on campaign maps);
+  UE4SS's stock `CheatManagerEnablerMod` stays off (deploy/installer do it).
+- `tools/test_campaign.ps1` (host a campaign map, join, game-driven travel) and
+  `tools/test_travels.ps1 -Count N` (N level reloads in a row: crash check).
 
 ## Releases (user's standing order)
 - Publish EVERY version to GitHub: `ImmortalSouull/trepang2-coop`, tag `vX.Y.Z`, release notes in

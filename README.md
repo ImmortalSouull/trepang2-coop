@@ -2,13 +2,13 @@
 
 **English** · [Русский](dist_src/README.ru.md)
 
-An unofficial mod that adds **co-op** to **Trepang2** — for now in **Horde (Survival)** mode.
+An unofficial mod that adds **co-op** to **Trepang2**: **Horde (Survival)** mode and, since v0.6, the **story campaign** (early).
 Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) mod loader.
 
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.5.1 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.6.0 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -35,6 +35,12 @@ the friend accepts the invite (or clicks "Join game" on the host in the Steam fr
 host's name under "Steam friends hosting" in the F4 menu) and joins automatically.
 Not yet tested between two different Steam accounts.
 
+## Campaign (early, v0.6)
+Play the campaign as usual; in the safehouse or in a mission the host presses **F4 → HOST** (the level
+reloads from the last checkpoint with the server on) and the friend joins. Wherever the host's game goes
+(mission start, next level, checkpoint, restart) friends follow automatically. Story triggers are shared,
+enemy squads come from the host, everyone down = back to the last checkpoint. Cutscenes are not synced yet.
+
 ## Features
 - Each player plays their own full character; enemies, waves and money run on the host.
 - Shots, damage (incl. headshots) and enemy deaths synced both ways; enemies hurt both players.
@@ -42,7 +48,7 @@ Not yet tested between two different Steam accounts.
 - Partner picks up dropped / bought weapons; partner kills earn Horde money; partner markers; 3+ players.
 
 ## Known issues
-See [docs/releases](docs/releases). Story missions are not supported yet.
+See [docs/releases](docs/releases). Campaign co-op is early: cutscenes and some scripted scenes are not synced yet.
 
 ## For developers
 `mod/T2Coop/Scripts/main.lua` is the whole mod. `MODLOG.md` documents every engine finding,

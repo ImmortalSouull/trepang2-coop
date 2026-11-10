@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde Mode) - Beta
 
 ## Version
-0.5.1
+0.6.0
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -56,7 +56,7 @@ Porthole, Radmin VPN or ZeroTier. The friend types the host's IP in the F4 menu 
 [*]Fire / incendiary damage from the partner is not synced yet
 [*]Ammo / health pickups are separate for each player
 [*]Steam mode is not yet tested between two different Steam accounts
-[*]Story missions are not supported yet
+[*]Campaign co-op is early (v0.6): host presses F4 - HOST in the safehouse or a mission, friends follow the host through levels and checkpoints; cutscenes not synced yet
 [*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the
 [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
 [/list]
@@ -82,5 +82,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.5.1.zip  (name: "Trepang2 Co-op v0.5.1 (beta)")
+- Main file: dist/Trepang2-Coop-v0.6.0.zip  (name: "Trepang2 Co-op v0.6.0 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

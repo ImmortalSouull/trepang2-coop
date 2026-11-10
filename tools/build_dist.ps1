@@ -17,6 +17,8 @@ $ue = Get-ChildItem "$proj\third_party" -Filter "UE4SS_*.zip" | Select-Object -F
 Expand-Archive $ue.FullName "$stage\files" -Force          # -> files\dwmapi.dll, files\ue4ss\...
 (Get-Content "$stage\files\ue4ss\UE4SS-settings.ini") -replace '^DefaultExecuteInGameThreadMethod\s*=.*', 'DefaultExecuteInGameThreadMethod = ProcessEvent' |
     Set-Content "$stage\files\ue4ss\UE4SS-settings.ini" -Encoding ascii
+(Get-Content "$stage\files\ue4ss\Mods\mods.txt") -replace '^CheatManagerEnablerMod\s*:.*', 'CheatManagerEnablerMod : 0' |
+    Set-Content "$stage\files\ue4ss\Mods\mods.txt" -Encoding ascii
 Copy-Item "$proj\mod\T2Coop\Scripts\main.lua" "$stage\files\Mods\T2Coop\Scripts\"
 & python -I "$PSScriptRoot\build_steamdll.py" | Out-Null
 Copy-Item "$proj\mod\T2Coop\t2coop_steam.dll" "$stage\files\Mods\T2Coop\"

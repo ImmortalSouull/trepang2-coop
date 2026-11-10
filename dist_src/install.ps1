@@ -66,6 +66,8 @@ if (-not ($lines -match '^T2Coop\s*:')) {
 } else {
     $lines = $lines -replace '^T2Coop\s*:.*', 'T2Coop : 1'
 }
+# UE4SS's stock cheat-manager mod hooks the same engine call the co-op uses and crashed the game
+$lines = $lines -replace '^CheatManagerEnablerMod\s*:.*', 'CheatManagerEnablerMod : 0'
 Set-Content $modsTxt $lines -Encoding ascii
 
 # 3) Network setting the game needs to host (read by the game at startup).
@@ -75,9 +77,11 @@ $engine = Join-Path $cfgDir "Engine.ini"
 $text = if (Test-Path $engine) { Get-Content $engine -Raw } else { "" }
 # (not in Steam mode: there the game's own Steam subsystem is used; the mod handles it)
 $steamMode = $keepConfig -and ($keepConfig -match '(?m)^\s*net\s*=\s*steam')
-if (-not $steamMode -and $text -notmatch 'DefaultPlatformService\s*=\s*Null') {
+if (-not $steamMode -and $text -notmatch '\[OnlineSubsystem\][^\[]*DefaultPlatformService\s*=\s*Null') {
     if (Test-Path $engine) { Copy-Item $engine "$engine.bak_before_coop" -Force }
-    Add-Content $engine "`r`n[OnlineSubsystem]`r`nDefaultPlatformService=Null`r`n" -Encoding ascii
+    # drop a stray Null line from another section, then add the right one
+    $text = $text -replace '(?m)^DefaultPlatformService\s*=\s*Null\s*\r?\n?', ''
+    Set-Content $engine ($text + "`r`n[OnlineSubsystem]`r`nDefaultPlatformService=Null`r`n") -Encoding ascii -NoNewline
 }
 
 # 4) Optional: the host's IP for F6.

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.5.1"
+local VERSION = "0.6.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -32,6 +32,7 @@ local function runTasks(dtMs)
     if running then return end   -- never re-enter (game calls made by a task can tick hooks)
     if S.loading then return end
     if S.graceMs > 0 then S.graceMs = S.graceMs - dtMs; return end
+    if S.gcStopped then S.gcStopped = false; collectgarbage("restart") end
     running = true
     for i = #tasks, 1, -1 do
         local t = tasks[i]
@@ -120,11 +121,17 @@ end
 
 local function stopLoadingScreen()
     local gi = FindFirstOf("GameInstanceBP_C")
-    if valid(gi) then
-        pcall(function() gi:SetBootFlowFinished() end)
-        pcall(function() gi:ForceStopLoadingScreen() end)
-    end
+    if not valid(gi) then return end
+    pcall(function() gi:SetBootFlowFinished() end)
+    -- Not once we're in the host's world (spawn point received): calling it while a client was
+    -- setting up its pawn crashed the game (blueprint code writing into a widget already gone).
+    if S.joined and S.client and S.client.spawn then return end
+    local up = false
+    pcall(function() up = valid(gi.CurrentLoadingWidget) end)
+    if up then pcall(function() gi:ForceStopLoadingScreen() end) end
 end
+
+S.stopLoadingScreen = stopLoadingScreen
 
 -- The "press any key" loading screen blocks travel until dismissed; after we start a travel,
 -- keep dismissing it for a few seconds (both the old and the new map show it).
@@ -132,6 +139,7 @@ local function keepClearingLoadingScreen(ms)
     local left = ms or 15000
     S.every(1000, function(dt)
         left = left - dt
+        if S.client and valid(S.client.pawn) then return true end   -- we're in: nothing to clear
         stopLoadingScreen()
         return left <= 0
     end)
@@ -159,6 +167,7 @@ end
 function S.join(ip)
     S.hosting = false
     S.joined = true
+    if S.hookClientBeginPlay then S.hookClientBeginPlay() end
     forceIpDriver()
     stopLoadingScreen()
     local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
@@ -208,6 +217,7 @@ local function setupRemotePlayers()
                 pcall(function() pc:ClientSetRotation(hr, false) end)
                 S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", hl.X + off, hl.Y, hl.Z + 20), string.format("%.1f", hr.Yaw))
                 log("placed " .. pawn:GetFName():ToString() .. " for " .. pc:GetFName():ToString())
+                if S.sendCampaignState then pcall(S.sendCampaignState, pc) end
             end
         end
     end
@@ -241,15 +251,23 @@ local function guardPlayerPawn(actor)
     log("parked tick of " .. actor:GetFName():ToString())
 end
 
-pcall(function()
-    RegisterBeginPlayPostHook(function(ActorParam)
-        local ok, err = pcall(function()
-            local a = ActorParam.get and ActorParam:get() or ActorParam
-            if valid(a) then guardPlayerPawn(a) end
+-- The BeginPlay hook runs Lua for EVERY actor that starts (thousands on a campaign map); the host
+-- crashed inside it now and then, and the host doesn't need it. So it is placed only when this
+-- game first joins someone, and does nothing unless we are a client. (A hook on just
+-- PlayerBP_C:ReceiveBeginPlay doesn't work: UE4SS drops it when the class is reloaded with a map.)
+function S.hookClientBeginPlay()
+    if S.bpHooked then return end
+    S.bpHooked = pcall(function()
+        RegisterBeginPlayPostHook(function(ActorParam)
+            if not S.joined then return end
+            local ok, err = pcall(function()
+                local a = ActorParam.get and ActorParam:get() or ActorParam
+                if valid(a) then guardPlayerPawn(a) end
+            end)
+            if not ok then log("beginplay hook error: " .. tostring(err)) end
         end)
-        if not ok then log("beginplay hook error: " .. tostring(err)) end
     end)
-end)
+end
 
 local function unparkReady()
     for k, pawn in pairs(parked) do
@@ -538,8 +556,16 @@ RegisterLoadMapPreHook(function()
     S.icons = {}
     S.wdup = {}
     S.myGrenades = {}
+    S.trigSeen = {}
+    S.trQueue, S.trReadyAt = {}, nil
     if S.me then S.me.down, S.me.max = false, nil end
     S.downed = {}
+    -- UE4SS crashed inside Lua right after some map loads (host side, ~1 in 4): most likely the Lua
+    -- GC finalizing wrappers of objects from the world that was just torn down. Collect now, while
+    -- the old world still exists, and keep the GC off until the new map has settled.
+    collectgarbage("collect")
+    collectgarbage("stop")
+    S.gcStopped = true
 end)
 
 local loadedAt = 0
@@ -592,6 +618,9 @@ local function fixClientController()
 
     local puppet = pc.Pawn
     if not valid(puppet) or not c.spawn then return end   -- wait for the host's spawn point
+    -- Give the new map a moment: spawning our pawn right away sometimes crashed inside its
+    -- animation blueprint's setup (it reads things from the controller that weren't ready yet).
+    if os.clock() < (c.spawnAfter or 0) or not valid(pc.PlayerCameraManager) then return end
     local l, yaw = c.spawn.loc, c.spawn.yaw
     puppet:SetActorHiddenInGame(true)
     puppet:SetActorEnableCollision(false)
@@ -628,6 +657,7 @@ end
 handlers.client["S"] = function(_, p)
     local c = S.client
     c.spawn = { loc = vec(p, 1), yaw = tonumber(p[4]) }
+    c.spawnAfter = c.spawnAfter or (os.clock() + 1.5)
     log(string.format("client: spawn point %.0f %.0f %.0f", c.spawn.loc.X, c.spawn.loc.Y, c.spawn.loc.Z))
     if valid(c.pawn) then
         c.pawn:K2_SetActorLocationAndRotation(c.spawn.loc, { Pitch = 0, Yaw = c.spawn.yaw, Roll = 0 }, false, {}, true)
@@ -757,6 +787,22 @@ handlers.server["F"] = function(pc, p)
     for _ = 1, math.min(tonumber(p[1]) or 1, 3) do
         pcall(function() w:FireAnimation(false) end)
     end
+    -- sound + muzzle flash: the puppet's gun never really fires, so play its 3rd-person effects here
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local loc = pawn:K2_GetActorLocation()
+    local rot = pawn:K2_GetActorRotation()
+    local yaw = math.rad(rot.Yaw)
+    local muzzle = { X = loc.X + math.cos(yaw) * 70, Y = loc.Y + math.sin(yaw) * 70, Z = loc.Z + 50 }
+    pcall(function()
+        local snd = w.FireSound3P
+        if not valid(snd) then snd = w.FireSound1P end
+        if valid(snd) then GS:PlaySoundAtLocation(world(), snd, muzzle, rot, 1.0, 1.0, 0.0, nil, nil, pawn) end
+    end)
+    pcall(function()
+        local fx = w.MuzzleFlash3P[1].MuzzleFlashParticle
+        if valid(fx) then GS:SpawnEmitterAtLocation(world(), fx, muzzle, rot, { X = 1, Y = 1, Z = 1 }, true, 0, true) end
+    end)
+    S.stats.shotFx = (S.stats.shotFx or 0) + 1
 end
 
 ---------------------------------------------------------------------------
@@ -879,10 +925,17 @@ S.every(250, function(dt)
     if total > 1 and alive == 0 then
         S.wipeAt = S.wipeAt or (os.time() + 3)
         if os.time() >= S.wipeAt then
-            log("everyone is down - restarting the arena")
             S.wipeAt, S.downed = nil, {}
             S.toClients("RJ")
-            S.host(S.hostMap)
+            if S.isHordeMap(S.hostMap) then
+                log("everyone is down - restarting the arena")
+                S.host(S.hostMap)
+            else
+                -- campaign: back to the last checkpoint (the game's own load; we keep the server on)
+                log("everyone is down - loading the last checkpoint")
+                S.say("CO-OP: everyone is down - back to the last checkpoint")
+                S.loadLastSave()
+            end
         end
     else
         S.wipeAt = nil
@@ -1589,19 +1642,73 @@ local function currentLevelName()
     local ok, name = pcall(function() return GS:GetCurrentLevelName(world(), true):ToString() end)
     return ok and name or nil
 end
+-- Campaign: every level the GAME opens on the host (mission start from the safehouse, next
+-- level, checkpoint reload, restart) comes without "listen", which would end the session.
+-- OpenLevel only stores the travel URL for the next frame, so right after the game's call we
+-- issue the same travel again with ?listen added - the later call wins. Clients lose the old
+-- server and reconnect on their own.
+local relisten = false
+local function onGameOpenLevel(ctx, name, opts)
+    if relisten then return end
+    local n, o = "", ""
+    pcall(function() n = name:get():ToString() end)
+    pcall(function() o = opts:get():ToString() end)
+    -- client: only the host moves the group. Quitting to the main menu (while still connected)
+    -- ends co-op; any other level our own copy of the story asks for -> back to the host instead.
+    if S.joined and not S.hosting then
+        if n:find("FrontEndMenuMap") then
+            if netDriver() then S.joined = false; S.rejoin = nil; log("left co-op (main menu)") end
+            return
+        end
+        if n == "" or n == "None" or not S.lastIP then return end
+        relisten = true
+        pcall(function()
+            local addr = S.lastIP
+            if addr:match("^%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d$") then addr = "steam." .. addr end
+            StaticFindObject("/Script/Engine.Default__KismetSystemLibrary"):ExecuteConsoleCommand(ctx:get(), "open " .. addr, localPC())
+        end)
+        relisten = false
+        log("this game wanted to open " .. n .. " on its own - staying with the host")
+        return
+    end
+    if not S.hosting then return end
+    if n == "" or n == "None" or o:lower():find("listen") then return end
+    if n:find("FrontEndMenuMap") then return end   -- back to the main menu: hosting ends (watchdog)
+    relisten = true
+    local ok, err = pcall(function()
+        GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+        forceIpDriver()
+        GS:OpenLevel(ctx:get(), FName(n, EFindName.FNAME_Add), true, o ~= "" and (o .. "?listen") or "listen")
+    end)
+    relisten = false
+    S.awaitHostLoad = true
+    S.hostMap = n
+    S.travels = (S.travels or 0) + 1
+    log("host travel to " .. n .. (o ~= "" and (" [" .. o .. "]") or "") .. ": server kept on " .. tostring(ok) .. " " .. tostring(err or ""))
+end
+pcall(function()
+    RegisterHook("/Script/Engine.GameplayStatics:OpenLevel", function() end, function(self, ctx, name, abs, opts)
+        onGameOpenLevel(ctx, name, opts)
+    end)
+end)
+
 S.every(1000, function()
     if not S.hosting or S.awaitHostLoad or loadedAt == 0 or os.time() - loadedAt < 4 then return end
     local name = currentLevelName()
     if not name or name == "" then return end
-    local hostShort = (S.hostMap or ""):match("([^/]+)$")
-    if name ~= hostShort then
-        log("left the arena (" .. name .. ") - co-op hosting stopped")
+    if name:find("FrontEndMenuMap") then
+        log("back in the main menu - co-op hosting stopped")
         S.hosting = false
         return
     end
+    local hostShort = (S.hostMap or ""):match("([^/]+)$")
+    if name ~= hostShort and netDriver() then
+        S.hostMap = name   -- some other travel we didn't see (still a server): follow it
+        return
+    end
     if not netDriver() then
-        log("level restarted without a server - hosting it again")
-        S.host(S.hostMap)
+        log("level " .. name .. " has no server - hosting it again")
+        S.host(name ~= hostShort and name or S.hostMap)
     end
 end)
 
@@ -1617,6 +1724,165 @@ S.every(500, function()
         local hp = localPC()
         if valid(hp) and valid(hp.Pawn) and not hp.Pawn.bInvulnerable then
             pcall(function() hp.Pawn:SetInvulnerableState(true) end)
+        end
+    end
+end)
+
+---------------------------------------------------------------------------
+-- Campaign scripting. Level triggers (BaseTriggerOnce_C and its children: autosaves, enemy
+-- squads, doors, objective texts...) have the same names on every machine. The host's triggers
+-- are the real ones (partners' puppets set them off there too). On a client, triggers that save
+-- or spawn would start a private copy of the story, so a client keeps only the purely local ones
+-- (sky, music, tutorials) switched on; when a host trigger fires, clients fire their copy too,
+-- except saves and spawns (the host's enemies reach clients through the engine anyway).
+---------------------------------------------------------------------------
+function S.isHordeMap(map) return (map or ""):find("Horde") ~= nil end
+
+local function missionLib()
+    local L = StaticFindObject("/Game/Blueprint/Game/BP_MissionLib.Default__BP_MissionLib_C")
+    if valid(L) then return L end
+end
+-- the game's own "load last checkpoint"; if nothing is saved yet, its "restart level"
+function S.loadLastSave()
+    local L, w = missionLib(), world()
+    if not L or not valid(w) then return end
+    local before = S.travels or 0
+    pcall(function() L["Trepang Load Last Save"](L, w, false, w) end)
+    S.every(6000, function()
+        if (S.travels or 0) == before and not S.loading then
+            log("no checkpoint to load - restarting the level")
+            local L2, w2 = missionLib(), world()
+            if L2 and valid(w2) then pcall(function() L2["Trepang Restart Level"](L2, w2, w2) end) end
+        end
+        return true
+    end)
+end
+
+-- the campaign level we're in (safehouse or a mission), nil in the menu / horde / offline maps
+function S.campaignLevel()
+    local name = currentLevelName()
+    if not name or name == "" or name:find("FrontEnd") or name:find("MenuMap") or S.isHordeMap(name) then return nil end
+    return name
+end
+-- host the level we're in: the game reloads it (last checkpoint, or a restart) and our
+-- OpenLevel hook keeps the server on
+function S.hostHere(name)
+    S.hosting, S.joined = true, false
+    S.awaitHostLoad = true
+    S.hostMap = name
+    S.known = {}
+    log("hosting this level: " .. name)
+    if name:find("SafeHouse") then
+        local L, w = missionLib(), world()
+        if L and valid(w) then pcall(function() L["Trepang Restart Level"](L, w, w) end) end
+    else
+        S.loadLastSave()
+    end
+end
+
+local TRIGGER_CLASS = "/Game/Blueprint/Tool/Triggers/BaseTriggerOnce.BaseTriggerOnce_C"
+local function clientNeverRuns(cls)
+    local c = cls:lower()
+    return c:find("autosave") or c:find("spawn") or c:find("missionready")
+end
+local function clientLocal(cls)
+    local c = cls:lower()
+    return c:find("skytransition") or c:find("ambientmusic") or c:find("showtutorial")
+end
+local function trigClass(t) return t:GetClass():GetFName():ToString() end
+
+-- host: watch every trigger; tell clients when one fires
+S.trigSeen = {}
+S.every(250, function()
+    if not isServer() then return end
+    for _, t in ipairs(S.allOf(TRIGGER_CLASS)) do
+        local name = t:GetFName():ToString()
+        local n = t.NumTimesTriggered
+        local was = S.trigSeen[name]
+        if was == nil then
+            S.trigSeen[name] = n           -- first look (new level / restored checkpoint): no event
+        elseif n > was then
+            S.trigSeen[name] = n
+            S.toClients("TR", name, n)
+            S.stats.trSent = (S.stats.trSent or 0) + 1
+        end
+    end
+end)
+-- host -> a client that just arrived: the story so far, and the current mission
+function S.sendCampaignState(pc)
+    for _, t in ipairs(S.allOf(TRIGGER_CLASS)) do
+        if t.NumTimesTriggered > 0 then S.toClient(pc, "TR", t:GetFName():ToString(), t.NumTimesTriggered) end
+    end
+    pcall(function()
+        local m = FindFirstOf("GameInstanceBP_C").CurrentMissionInfoObject
+        if valid(m) then S.toClient(pc, "MI", classPath(m)) end
+    end)
+end
+
+-- client: keep the story triggers off (checked often: we can spawn right inside one)
+S.every(100, function()
+    if not S.joined or not netDriver() then return end
+    for _, t in ipairs(S.allOf(TRIGGER_CLASS)) do
+        if not t.TriggerDisabled and not clientLocal(trigClass(t)) then t.TriggerDisabled = true end
+    end
+end)
+
+-- queued: run only once our own pawn has been in play for a few seconds (firing a trigger
+-- while the client was still setting up its pawn crashed the game)
+S.trQueue = {}
+handlers.client["TR"] = function(_, p)
+    table.insert(S.trQueue, { name = p[1], n = tonumber(p[2]) or 1 })
+    log("host trigger queued: " .. tostring(p[1]))
+end
+S.every(200, function()
+    if not S.joined or #S.trQueue == 0 then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or not controllerReady(pawn) then S.trReadyAt = nil return end
+    S.trReadyAt = S.trReadyAt or (os.clock() + 3)
+    if os.clock() < S.trReadyAt then return end
+    for _ = 1, 3 do
+        local e = table.remove(S.trQueue, 1)
+        if not e then break end
+        S.runHostTrigger(e.name, e.n, pawn)
+    end
+end)
+function S.runHostTrigger(name, n, pawn)
+    for _, t in ipairs(S.allOf(TRIGGER_CLASS)) do
+        if t:GetFName():ToString() == name then
+            local cls = trigClass(t)
+            if clientNeverRuns(cls) or clientLocal(cls) or t.NumTimesTriggered >= n then return end
+            local was = t.TriggerDisabled
+            t.TriggerDisabled = false
+            local ok, err = pcall(function() t:TryTrigger(pawn, {}) end)
+            t.TriggerDisabled = was
+            S.stats.trDone = (S.stats.trDone or 0) + 1
+            log("host trigger " .. name .. " (" .. cls .. "): " .. (ok and ("ran, n=" .. t.NumTimesTriggered) or tostring(err)))
+            return
+        end
+    end
+end
+
+handlers.client["MI"] = function(_, p)
+    pcall(function()
+        local gi = FindFirstOf("GameInstanceBP_C")
+        local cur = gi.CurrentMissionInfoObject
+        if valid(cur) and classPath(cur) == p[1] then return end
+        local cls = StaticFindObject(p[1])
+        if valid(cls) then gi:SetCurrentMission(cls); log("mission: " .. p[1]) end
+    end)
+end
+
+-- client: enemies come from the host (network copies). One that exists only here (spawned by
+-- something local) would be a ghost the host never sees - remove it.
+S.every(500, function()
+    if not S.joined or not netDriver() then return end
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+        -- (not the helicopters' AI "bullseye" targets: their owner keeps using them, removing one
+        -- crashed the game)
+        if c.Role == 3 and not c:IsA(playerCls) and not c:GetFName():ToString():find("Bullseye") then
+            log("removing local-only " .. c:GetFName():ToString())
+            pcall(function() c:K2_DestroyActor() end)
         end
     end
 end)
@@ -1743,11 +2009,16 @@ local function ensureEngineIni(mode)
     local f = io.open(path, "r")
     local text = f and f:read("*a") or ""
     if f then f:close() end
-    local hasNull = text:find("DefaultPlatformService%s*=%s*Null") ~= nil
+    -- only counts inside [OnlineSubsystem] (a stray line in another section does nothing)
+    local hasAnyNull = text:find("DefaultPlatformService%s*=%s*Null") ~= nil
+    local hasNull = false
+    for sec, body in text:gmatch("%[([^%]\n]+)%]([^%[]*)") do
+        if sec == "OnlineSubsystem" and body:find("DefaultPlatformService%s*=%s*Null") then hasNull = true end
+    end
     S.netMode = mode
     if mode == "steam" then
         S.driverClass = STEAM_DRIVER
-        if not hasNull then S.iniOk = true return end
+        if not hasAnyNull then S.iniOk = true return end
         text = text:gsub("DefaultPlatformService%s*=%s*Null[^\n]*\n?", "")
         local w = io.open(path, "w")
         if not w then log("could not update Engine.ini") return end
@@ -1756,9 +2027,10 @@ local function ensureEngineIni(mode)
     else
         S.driverClass = IP_DRIVER
         if hasNull then S.iniOk = true return end
-        local w = io.open(path, "a")
+        text = text:gsub("DefaultPlatformService%s*=%s*Null[^\n]*\n?", "")
+        local w = io.open(path, "w")
         if not w then log("could not update Engine.ini") return end
-        w:write("\n[OnlineSubsystem]\nDefaultPlatformService=Null\n")
+        w:write(text .. "\n[OnlineSubsystem]\nDefaultPlatformService=Null\n")
         w:close()
     end
     S.iniOk = false
@@ -1887,6 +2159,13 @@ S.every(100, function()
     pending = nil
     if action == "host" then
         if S.iniOk == false then S.notify("CO-OP: restart the game once (settings were just installed)") return end
+        local here = S.campaignLevel()
+        if here then
+            S.notify("CO-OP: hosting " .. here .. " - reloading the last checkpoint" ..
+                (S.netMode == "steam" and " (F4 to invite Steam friends)" or " (UDP 7777)"))
+            S.hostHere(here)
+            return
+        end
         S.notify("CO-OP: hosting " .. shortName(cfg.map) .. (S.netMode == "steam" and " - F4 to invite Steam friends" or " (UDP 7777)"))
         S.host(cfg.map)
     elseif action == "join" then
@@ -2149,7 +2428,11 @@ local function refreshMenu()
     end
     if S.iniOk == false then status = "RESTART THE GAME to apply network settings" end
     pcall(function() menu.status:SetText(FText(status)) end)
-    pcall(function() menu.arena:SetText(FText("Arena to host: " .. shortName(cfg.map))) end)
+    local here = S.campaignLevel()
+    pcall(function()
+        menu.arena:SetText(FText(here and ("HOST = this level (" .. here .. "), from the last checkpoint")
+            or ("Arena to host: " .. shortName(cfg.map))))
+    end)
     local list = playerList()
     pcall(function() menu.players:SetText(FText("Players (" .. #list .. "):\n  " .. table.concat(list, "\n  "))) end)
     local net

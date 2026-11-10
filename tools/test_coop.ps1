@@ -10,11 +10,11 @@ $crashBefore = @(Get-ChildItem $crashDir -Directory -ErrorAction SilentlyContinu
 if (-not $NoRestart) { & "$D\launch.ps1" -Which A,B -Kill | Out-Null; Start-Sleep 5 }
 
 & "$D\t2.ps1" -Inst A -Mod T2Coop -Cmd "T2C.devGod=true; T2C.host('$Map'); return 'host'" -Wait 40 | Out-Null
-& "$D\t2.ps1" -Inst A -Mod T2Coop -Cmd 'FindFirstOf("GameInstanceBP_C"):ForceStopLoadingScreen(); return "ok"' -Wait 2 | Out-Null
+& "$D\t2.ps1" -Inst A -Mod T2Coop -Cmd 'T2C.stopLoadingScreen(); return "ok"' -Wait 2 | Out-Null
 $listen = netstat -ano -p UDP | Select-String ":7777"
 "listen: " + [bool]$listen
 & "$D\t2.ps1" -Inst B -Mod T2Coop -Cmd 'T2C.join("127.0.0.1"); return "join"' -Wait $Settle | Out-Null
-& "$D\t2.ps1" -Inst B -Mod T2Coop -Cmd 'FindFirstOf("GameInstanceBP_C"):ForceStopLoadingScreen(); return "ok"' -Wait 3 | Out-Null
+& "$D\t2.ps1" -Inst B -Mod T2Coop -Cmd 'T2C.stopLoadingScreen(); return "ok"' -Wait 3 | Out-Null
 
 $q = 'local s=""; for _,pc in ipairs(FindAllOf("PlayerController") or {}) do local p=pc.Pawn; s=s.." | "..pc:GetFName():ToString().." local="..tostring(pc:IsLocalController()).." role="..tostring(pc.Role); if p:IsValid() then local l=p:K2_GetActorLocation(); s=s..string.format(" %s @ %.0f %.0f %.0f", p:GetFName():ToString(), l.X,l.Y,l.Z) else s=s.." nopawn" end end; return s'
 "--- A"

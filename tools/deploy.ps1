@@ -26,6 +26,9 @@ foreach ($t in $targets) {
       $txt = @($txt[0..($i - 1)]) + "$m : 1" + @($txt[$i..($txt.Count - 1)])
     }
   }
+  # UE4SS's stock CheatManagerEnabler hooks ClientRestart; with it the game crashed on map loads
+  # and on the client's pawn swap (MODLOG 32)
+  $txt = $txt -replace '^CheatManagerEnablerMod\s*:.*', 'CheatManagerEnablerMod : 0'
   Set-Content "$t\mods.txt" $txt -Encoding ascii
 }
 "deployed: $($mods -join ', ')"

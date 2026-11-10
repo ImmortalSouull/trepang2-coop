@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.4.1"
+local VERSION = "0.4.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -531,6 +531,7 @@ RegisterLoadMapPreHook(function()
     if S.client then S.client = { pawn = nil, puppet = nil } end
     S.icons = {}
     S.wdup = {}
+    S.myGrenades = {}
     if S.me then S.me.down, S.me.max = false, nil end
     S.downed = {}
 end)
@@ -1183,6 +1184,68 @@ handlers.server["SH"] = function(pc, p)
             end
         end
     end
+end
+
+---------------------------------------------------------------------------
+-- Partner grenades. A client's grenade explodes only on that client and can't hurt enemy copies
+-- (a grenade spawned on the host from Lua doesn't arm either). So the client watches its own
+-- grenades and, when one is gone (exploded), tells the host where; the host applies the same
+-- radial damage there on the partner's behalf (players are not hurt).
+---------------------------------------------------------------------------
+S.myGrenades = {}
+S.every(0, function()
+    if not S.joined or not netDriver() then return end
+    local mine = S.client.pawn
+    if not valid(mine) then return end
+    local myName = mine:GetFullName()
+    for _, pj in ipairs(S.allOf("/Script/CPPFPS.BaseProjectile")) do
+        if pj.Role == 3 then
+            local key = pj:GetFullName()
+            local g = S.myGrenades[key]
+            if not g then
+                local inst = pj.Instigator
+                local ok, radius = pcall(function() return pj.GrenadeDamageRadius end)
+                if valid(inst) and inst:GetFullName() == myName and ok and type(radius) == "number" and radius > 0 then
+                    g = { actor = pj, radius = radius, base = pj.GrenadeBaseDamage, min = pj.GrenadeMinDamage, dmgCls = "" }
+                    pcall(function() g.dmgCls = pj.DamageClass:GetFullName():match("%s(.+)$") or "" end)
+                    S.myGrenades[key] = g
+                end
+            end
+            if g then g.pos = pj:K2_GetActorLocation() end
+        end
+    end
+    for key, g in pairs(S.myGrenades) do
+        if not valid(g.actor) or (g.actor.IsActorBeingDestroyed and g.actor:IsActorBeingDestroyed()) then
+            if g.pos then
+                S.toServer("EX", fmtVec(g.pos), string.format("%.1f|%.1f|%.1f", g.base or 100, g.min or 0, g.radius), g.dmgCls or "")
+                S.stats.exSent = (S.stats.exSent or 0) + 1
+            end
+            S.myGrenades[key] = nil
+        end
+    end
+end)
+
+handlers.server["EX"] = function(pc, p)
+    local pos, base, minD, radius, dcls = vec(p, 1), tonumber(p[4]) or 100, tonumber(p[5]) or 0, tonumber(p[6]) or 500, p[7]
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local dt = (dcls and dcls ~= "") and StaticFindObject(dcls) or nil
+    if not valid(dt) then dt = classOf("/Script/Engine.DamageType") end
+    -- Not ApplyRadialDamage*: calling it from Lua stopped UE4SS on the host. Plain ApplyDamage per
+    -- enemy in range, linear falloff from base (inner 30%) to min at the edge.
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    local puppet = pc.Pawn
+    for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+        if not c:IsA(playerCls) and not c.bIsDead then
+            local d = math.sqrt(dist2(c:K2_GetActorLocation(), pos))
+            if d <= radius then
+                local k = d <= radius * 0.3 and 1 or (1 - (d - radius * 0.3) / (radius * 0.7))
+                local dmg = minD + (base - minD) * k
+                GS:ApplyDamage(c, dmg, pc, valid(puppet) and puppet or nil, dt)
+                if c.bIsDead then S.creditPartnerKill(c, dmg) end
+            end
+        end
+    end
+    S.stats.explosions = (S.stats.explosions or 0) + 1
 end
 
 -- Client -> host: our pose 20 times a second.

@@ -120,6 +120,11 @@
     Старый путь `D` (OnSpawnedProjectileDamagedOther) по-настоящему никогда не срабатывал.
 26. Трассировки по каналам 2–5 и `Mesh:GetSocketLocation` из Lua уронили хост внутри UE4SS — не использовать.
 
+27. **Гранаты напарника**: граната, созданная из Lua (и на хосте, и на клиенте), не взводится — урона нет.
+    Клиент следит за своими гранатами (`BaseGrenadeProjectile_C`: GrenadeBaseDamage/MinDamage/DamageRadius,
+    DamageClass); когда граната исчезла — `EX|точка|база|мин|радиус|класс`. Хост: `ApplyDamage` каждому
+    врагу в радиусе с линейным спадом. `ApplyRadialDamageWithFalloff` из Lua остановил UE4SS на хосте — не использовать.
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

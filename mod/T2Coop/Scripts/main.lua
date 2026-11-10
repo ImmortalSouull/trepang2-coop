@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.6.0"
+local VERSION = "0.6.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1263,27 +1263,24 @@ S.every(250, function()
 end)
 
 -- The HUD's "friendly under the crosshair" box shows "NONE" for players: show the partner's name.
+-- The widget writes "NONE" again every frame, so the text can't be replaced: the box is made
+-- see-through while it says NONE (only players get that); the partner's marker shows the name.
 S.partnerName = nil
-S.hudNameHooked = false
-local function hookHudName()
-    local h = FindFirstOf("PlayerHUD2_C")
-    if not valid(h) then return end
-    local path = h:GetClass():GetFullName():gsub("^%S+%s+", "")
-    S.hudNameHooked = pcall(function()
-        RegisterHook(path .. ":Tick", function() end, function(self)
-            if not S.partnerName then return end
-            local hud = self:get()
+S.every(100, function()
+    if not (S.hosting or S.joined) then return end
+    for _, hud in ipairs(FindAllOf("PlayerHUD2_C") or {}) do
+        if valid(hud) then
             local ok, t = pcall(function() return hud.FriendlyCharacterName:GetText():ToString() end)
-            if ok and t == "NONE" then
-                pcall(function() hud.FriendlyCharacterName:SetText(FText(S.partnerName)) end)
-                pcall(function() hud.FriendlySquadText:SetText(FText("CO-OP PARTNER")) end)
+            if ok then
+                -- (render scale, not opacity: the HUD's own fade animation drives the opacity)
+                local want = (t == "NONE") and 0.0 or 1.0
+                pcall(function()
+                    local box = hud.MouseOverFriendlyBox
+                    if box.RenderTransform.Scale.X ~= want then box:SetRenderScale({ X = want, Y = want }) end
+                end)
             end
-        end)
-    end)
-    if S.hudNameHooked then log("HUD name hook on " .. path) end
-end
-S.every(1000, function()
-    if (S.hosting or S.joined) and not S.hudNameHooked then hookHudName() end
+        end
+    end
 end)
 
 ---------------------------------------------------------------------------
@@ -1611,6 +1608,123 @@ handlers.server["DK"] = function(pc, p)
     if npc.bIsDead then S.creditPartnerKill(npc, dmg) end
 end
 
+---------------------------------------------------------------------------
+-- Other players' bodies. A player's pawn is built for first person: its full body (Mesh) is
+-- hidden on its own machine, the legs-only body (MeshLegs), arms (Mesh1P) and first-person gun
+-- are shown instead. On the other machines the same pawn came out as a half body with a gun
+-- floating in the air. For every OTHER player's pawn we show the full body with the gun in its
+-- right hand and hide the first-person pieces.
+-- Animation: on the host a client's puppet is an "autonomous" pawn whose body pose the engine
+-- only ticks on movement packets (which our client never sends for it) - frozen in one pose. And
+-- the body's anim blueprint doesn't work out walking for players at all. So the host lets the
+-- pose tick, and everyone feeds each such body its speed and direction (from how it moves).
+---------------------------------------------------------------------------
+S.bodies = {}   -- pawn full name -> { pawn, last, t, vx, vy }
+
+local function otherBodies()
+    local list = {}
+    local mine = myPawn and myPawn() or nil
+    local myPuppet = S.joined and S.client and S.client.puppet or nil
+    for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        if valid(p.PlayerState) and not same(p, mine) and not same(p, myPuppet) and not p.bHidden then
+            table.insert(list, p)
+        end
+    end
+    return list
+end
+
+local function showAsThirdPerson(p)
+    pcall(function()
+        if p.Mesh.bHiddenInGame then p.Mesh:SetHiddenInGame(false, false) end
+        if not p.Mesh:IsVisible() then p.Mesh:SetVisibility(true, false) end
+    end)
+    for _, k in ipairs({ "MeshLegs", "Mesh1P", "Mesh1P2" }) do
+        pcall(function() local c = p[k]; if valid(c) and c:IsVisible() then c:SetVisibility(false, false) end end)
+    end
+    if S.hosting then
+        pcall(function() if p.Mesh.bOnlyAllowAutonomousTickPose then p.Mesh.bOnlyAllowAutonomousTickPose = false end end)
+    end
+    local w = p.CurrentWeapon
+    if not valid(w) then return end
+    for _, k in ipairs({ "Mesh1P", "Mesh1P2" }) do
+        pcall(function() local c = w[k]; if valid(c) and c:IsVisible() then c:SetVisibility(false, false) end end)
+    end
+    pcall(function()
+        local m3 = w.Mesh3P
+        if not same(m3:GetAttachParent(), p.Mesh) then
+            m3:K2_AttachToComponent(p.Mesh, FName("hand_r_align", EFindName.FNAME_Add), 0, 0, 0, false)
+        end
+        if not m3:IsVisible() then m3:SetVisibility(true, false) end
+    end)
+end
+
+S.every(250, function()
+    if not (S.hosting or S.joined) or not netDriver() then S.bodies = {} return end
+    local seen = {}
+    for _, p in ipairs(otherBodies()) do
+        showAsThirdPerson(p)
+        local key = p:GetFullName()
+        seen[key] = true
+        S.bodies[key] = S.bodies[key] or { pawn = p, vx = 0, vy = 0 }
+    end
+    for k in pairs(S.bodies) do if not seen[k] then S.bodies[k] = nil end end
+    -- client: the host's pawn (placed in the level) also made itself a local gun here when the map
+    -- loaded; the real one comes from the host. Hide those local extras (a second gun in the hand).
+    -- Same for the guns of our own hidden puppet (they floated where the puppet stands).
+    if S.joined then
+        local puppet = S.client and S.client.puppet
+        local pname = valid(puppet) and puppet:GetFullName() or nil
+        for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+            if not w.bHidden then
+                local ok, owner = pcall(function() return w.Owner:GetFullName() end)
+                if ok and ((w.Role == 3 and seen[owner]) or owner == pname) then
+                    pcall(function() w:SetActorHiddenInGame(true) end)
+                end
+            end
+        end
+    end
+end)
+
+-- Every frame (our heartbeat): speed and direction from how the body moved. The blueprint never
+-- writes these fields for players, so values set here stay. (Not a hook on the anim blueprint's
+-- update: that runs thousands of times a second for all characters and crashed UE4SS.)
+local function feedBody(e)
+    local ai = e.pawn.Mesh.AnimScriptInstance
+    if not valid(ai) then return end
+    local root = e.pawn.RootComponent
+    local l = root.RelativeLocation
+    local now = os.clock()
+    if not e.last then e.last, e.t = { X = l.X, Y = l.Y }, now return end
+    local dx, dy = l.X - e.last.X, l.Y - e.last.Y
+    if dx * dx + dy * dy > 0.01 then
+        -- positions arrive in steps (20 per second): velocity over the time since the last step
+        local span = math.max(now - e.t, 0.016)
+        local vx, vy = dx / span, dy / span
+        if vx * vx + vy * vy > 1200 * 1200 then vx, vy = 0, 0 end   -- a teleport, not a step
+        e.vx, e.vy = e.vx * 0.5 + vx * 0.5, e.vy * 0.5 + vy * 0.5
+        e.last, e.t = { X = l.X, Y = l.Y }, now
+    elseif now - e.t > 0.25 then
+        e.vx, e.vy = e.vx * 0.6, e.vy * 0.6
+    end
+    local speed = math.sqrt(e.vx * e.vx + e.vy * e.vy)
+    if speed < 15 then speed = 0 end
+    local yaw = math.rad(root.RelativeRotation.Yaw)
+    local fwd = e.vx * math.cos(yaw) + e.vy * math.sin(yaw)
+    local right = -e.vx * math.sin(yaw) + e.vy * math.cos(yaw)
+    local dir = speed > 0 and math.deg(math.atan(right, fwd)) or 0
+    ai.Speed = speed
+    ai.PlanarVelocity = speed
+    ai.Direction = dir
+    ai.Moving = speed > 0
+    ai.LastMoveSpeed = speed
+    if speed > 0 then ai.LastMoveDirection = dir end
+end
+S.every(0, function()
+    for _, e in pairs(S.bodies) do
+        if valid(e.pawn) then pcall(feedBody, e) end
+    end
+end)
+
 -- Client -> host: our pose 20 times a second.
 S.every(50, function()
     if not S.joined then return end
@@ -1629,6 +1743,7 @@ handlers.server["P"] = function(pc, p)
     local pawn = pc.Pawn
     if not valid(pawn) then return end
     local l, yaw, pitch, v = vec(p, 1), tonumber(p[4]), tonumber(p[5]), vec(p, 6)
+    if S.devNoPose then return end   -- dev: move the puppet by hand
     pawn:K2_SetActorLocationAndRotation(l, { Pitch = 0, Yaw = yaw, Roll = 0 }, false, {}, true)
     pcall(function() pawn.CharacterMovement.Velocity = v end)
     pcall(function() pc:SetControlRotation({ Pitch = pitch, Yaw = yaw, Roll = 0 }) end)

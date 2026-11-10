@@ -209,6 +209,15 @@
     `MouseOverFriendlyBox` через RenderScale 0 (прозрачность крутит анимация HUD). Скриншоты:
     `tools/face_off.ps1` (игроки друг напротив друга), `tools/crop.ps1` (вырез + яркость).
 
+38. **Модель 106.** Тело игрока по умолчанию — наёмник `rig_character_soldier_light`. Модель 106 есть в игре:
+    `/Game/Character/NPC/Special/Light106/rig_Light106` (тот же скелет UE4_Mannequin_Skeleton → все анимации
+    работают). `Mesh:SetSkeletalMesh(m,false)` + вернуть материалы 106 (`SetMaterial(i, m.Materials[i].MaterialInterface)`):
+    слот 0 у компонента переопределён материалом наёмника. Есть ещё костюмы `/Game/Character/Player/Rig/*_fpv_tpp`
+    (107, patriarch, lawyerthug, jigglyboi) и `rig_107` — можно сделать выбор костюма. config.txt `model=106|soldier`.
+    Круговая съёмка моделей: `tools/turntable.ps1 -Who host|guest` (лист из 8 ракурсов).
+    Мелочь: у хоста рядом с напарником иногда всплывает подсказка «подобрать пистолет» (оружие напарника
+    без коллизии, бесхозного рядом нет) — не разобрано.
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

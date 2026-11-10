@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.6.1"
+local VERSION = "0.6.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1633,7 +1633,26 @@ local function otherBodies()
     return list
 end
 
+-- The body the game gives a player pawn is a generic merc NPC. Show Subject 106 instead (the
+-- game's own 106 character model, same skeleton, so all animations work). config.txt: model=soldier
+-- keeps the merc.
+local MODEL_106 = "/Game/Character/NPC/Special/Light106/rig_Light106.rig_Light106"
+local function wear106(p)
+    if (S.cfgModel or "106") == "soldier" then return end
+    local m = StaticFindObject(MODEL_106)
+    if not valid(m) and LoadAsset then pcall(function() m = LoadAsset(MODEL_106) end) end
+    if not valid(m) then return end
+    local mesh = p.Mesh
+    if same(mesh.SkeletalMesh, m) then return end
+    mesh:SetSkeletalMesh(m, false)
+    -- the merc's material overrides would stay on the new mesh: put 106's own materials back
+    for i = 1, #m.Materials do
+        pcall(function() mesh:SetMaterial(i - 1, m.Materials[i].MaterialInterface) end)
+    end
+end
+
 local function showAsThirdPerson(p)
+    pcall(wear106, p)
     pcall(function()
         if p.Mesh.bHiddenInGame then p.Mesh:SetHiddenInGame(false, false) end
         if not p.Mesh:IsVisible() then p.Mesh:SetVisibility(true, false) end
@@ -1646,6 +1665,8 @@ local function showAsThirdPerson(p)
     end
     local w = p.CurrentWeapon
     if not valid(w) then return end
+    -- a gun in someone's hands must not offer "pick up" to the others
+    pcall(function() if w:GetActorEnableCollision() then w:SetActorEnableCollision(false) end end)
     for _, k in ipairs({ "Mesh1P", "Mesh1P2" }) do
         pcall(function() local c = w[k]; if valid(c) and c:IsVisible() then c:SetVisibility(false, false) end end)
     end
@@ -2159,7 +2180,7 @@ end
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
-local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "" }
+local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", model = "106" }
 local function loadConfig()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return end
@@ -2182,11 +2203,14 @@ local function saveConfig()
     f:write("name=" .. cfg.name .. "\n")
     f:write("# arena to host (F8 cycles through all arenas in game)\n")
     f:write("map=" .. cfg.map .. "\n")
+    f:write("# how other players look: 106 (Subject 106) or soldier (generic merc)\n")
+    f:write("model=" .. cfg.model .. "\n")
     f:close()
 end
 loadConfig()
 saveConfig()
 S.cfg = cfg
+S.cfgModel = cfg.model
 pcall(ensureEngineIni, cfg.net)
 S.bootNet, S.bootIniOk, S.bootDriver = S.netMode, S.iniOk, S.driverClass
 

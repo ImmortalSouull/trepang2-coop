@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.4.3"
+local VERSION = "0.4.4"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1264,22 +1264,32 @@ S.every(0, function()
     FIRE_KEY.KeyName = FIRE_KEY.KeyName or FName("LeftMouseButton", EFindName.FNAME_Add)
     local kick = pc:IsInputKeyDown(MELEE_KEY)
     local fire = pc:IsInputKeyDown(FIRE_KEY)
-    local function send(dmg, head)
+    local function send(dmg, head, range)
         local cam = pc.PlayerCameraManager:GetCameraLocation()
         local rot = pc.PlayerCameraManager:GetCameraRotation()
-        S.toServer("MK", fmtVec(cam), string.format("%.2f|%.2f|%.1f|%.2f", rot.Yaw, rot.Pitch, dmg, head))
+        S.toServer("MK", fmtVec(cam), string.format("%.2f|%.2f|%.1f|%.2f|%.0f", rot.Yaw, rot.Pitch, dmg, head, range or 250))
     end
     if kick and not melee.kick then
-        local dmg, head = 50, 2
-        pcall(function() dmg = pawn.KickMeleeDamage; head = pawn.KickMeleeHeadshotDamageMultiplier end)
-        send(dmg, head)
+        -- Melee key: a kick while in the air, a strike with the weapon (butt / grip / fist) on the ground.
+        local falling = false
+        pcall(function() falling = pawn.CharacterMovement:IsFalling() end)
+        local dmg, head, range = 50, 2, 250
+        if falling then
+            pcall(function() dmg = pawn.KickMeleeDamage; head = pawn.KickMeleeHeadshotDamageMultiplier; range = pawn.MeleeKickRange end)
+        else
+            local w = pawn.CurrentWeapon
+            if valid(w) then
+                pcall(function() dmg = w.MeleeDamage; head = w.MeleeHeadshotDamageMultiplier; range = w.MeleeRange end)
+            end
+        end
+        send(dmg, head, range)
     end
     if fire and not melee.fire then
         local w = pawn.CurrentWeapon
         if valid(w) and w:GetClass():GetFName():ToString():find("Sword") then
             local dmg = 100
             pcall(function() local d = w:GetDamage(); if type(d) == "number" and d > 0 then dmg = d end end)
-            send(dmg, 2)
+            send(dmg, 2, 300)
         end
     end
     melee.kick, melee.fire = kick, fire
@@ -1288,6 +1298,7 @@ end)
 handlers.server["MK"] = function(pc, p)
     local cam, yaw, pitch = vec(p, 1), tonumber(p[4]), tonumber(p[5])
     local dmg, headMul = tonumber(p[6]) or 50, tonumber(p[7]) or 2
+    local reach = math.min(math.max((tonumber(p[8]) or 250) + 60, 150), 450)
     if not yaw then return end
     local KML = StaticFindObject("/Script/Engine.Default__KismetMathLibrary")
     local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
@@ -1297,7 +1308,7 @@ handlers.server["MK"] = function(pc, p)
     local puppet = pc.Pawn
     local hit = {}
     local ok, blocked = pcall(function()
-        return KSL:LineTraceSingle(world(), cam, { X = cam.X + dir.X * 250, Y = cam.Y + dir.Y * 250, Z = cam.Z + dir.Z * 250 },
+        return KSL:LineTraceSingle(world(), cam, { X = cam.X + dir.X * reach, Y = cam.Y + dir.Y * reach, Z = cam.Z + dir.Z * reach },
             0, false, valid(puppet) and { puppet } or {}, 0, hit, true, { R = 1, G = 0, B = 0, A = 1 }, { R = 0, G = 1, B = 0, A = 1 }, 0)
     end)
     if not (ok and blocked) then return end

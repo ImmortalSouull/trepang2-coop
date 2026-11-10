@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde Mode) - Beta
 
 ## Version
-0.4.1
+0.4.5
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -28,6 +28,7 @@ everything the game is missing for two (or more) players to fight the [b]Horde /
 [*]Every player plays their own full character: first-person guns, HUD, slow-mo, abilities
 [*]Enemies, waves and money run on the host; shots, headshots, damage and deaths are synced
 [*]Enemies attack every player
+[*]Partner bullets, shotgun pellets, headshots, grenades, kicks (jump kick, dropkick), melee strikes and sword hurt enemies on the host
 [*]Partner kills earn Horde money; guns dropped by enemies or bought by the host can be picked up by anyone
 [*]Horde HUD (wave, enemies left, money, timer) for everybody
 [*][b]Down instead of death[/b]: drop below 30% HP and you go down - a partner standing next to you revives you in 3 s.
@@ -52,7 +53,7 @@ Porthole, Radmin VPN or ZeroTier. Put the host's IP into
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
-[*]The partner's grenades, kicks and sword don't damage enemies on the host yet
+[*]Fire / incendiary damage from the partner is not synced yet
 [*]Ammo / health pickups are separate for each player
 [*]A "NONE" label may appear when the host aims at a partner
 [*]Story missions are not supported yet
@@ -82,5 +83,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.4.1.zip  (name: "Trepang2 Co-op v0.4.1 (beta)")
+- Main file: dist/Trepang2-Coop-v0.4.5.zip  (name: "Trepang2 Co-op v0.4.5 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

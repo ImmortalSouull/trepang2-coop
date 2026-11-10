@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.2.1"
+local VERSION = "0.2.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -876,6 +876,40 @@ handlers.client["H"] = function(_, p)
     local dmg = tonumber(p[1]) or 0
     if not valid(pawn) or dmg <= 0 or pawn.bInvulnerable then return end
     pawn.Health = pawn.Health - dmg
+end
+
+---------------------------------------------------------------------------
+-- Weapon the client holds, shown on its puppet at the host.
+-- Client sends the weapon class when it changes; the host spawns that weapon for the puppet,
+-- equips it and removes the old one. (Visual only: damage still comes from the client's hits.)
+---------------------------------------------------------------------------
+local wsync = { sent = nil, since = 0 }
+S.every(250, function(dt)
+    if not S.joined then return end
+    local pawn = S.client.pawn
+    if not valid(pawn) or not valid(pawn.CurrentWeapon) then return end
+    local cls = pawn.CurrentWeapon:GetClass():GetFullName():match("%s(.+)$")
+    wsync.since = wsync.since + dt
+    if cls and (cls ~= wsync.sent or wsync.since >= 5000) then   -- resend now and then (host may have restarted)
+        wsync.sent, wsync.since = cls, 0
+        S.toServer("WP", cls)
+    end
+end)
+
+handlers.server["WP"] = function(pc, p)
+    local puppet = pc.Pawn
+    local path = p[1]
+    if not valid(puppet) or not path or path == "" then return end
+    local cur = puppet.CurrentWeapon
+    if valid(cur) and cur:GetClass():GetFullName():match("%s(.+)$") == path then return end
+    local cls = StaticFindObject(path)
+    if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(path) end) end
+    if not valid(cls) then log("weapon sync: unknown class " .. path) return end
+    local w = world():SpawnActor(cls, puppet:K2_GetActorLocation(), { Pitch = 0, Yaw = 0, Roll = 0 })
+    if not valid(w) then return end
+    pcall(function() puppet:ForceEquipWeapon(w) end)
+    if valid(cur) then pcall(function() cur:K2_DestroyActor() end) end
+    log("puppet of " .. pc:GetFName():ToString() .. " now holds " .. (path:match("([^%.]+)$") or path))
 end
 
 -- Client -> host: our pose 20 times a second.

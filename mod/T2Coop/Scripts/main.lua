@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.3.0"
+local VERSION = "0.4.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -272,6 +272,8 @@ local function classOf(path)
     return c
 end
 
+local function classPath(obj) return obj:GetClass():GetFullName():match("%s(.+)$") end
+
 -- All live actors of a class, including subclasses.
 function S.allOf(path)
     local cls = classOf(path)
@@ -399,13 +401,7 @@ local function fmtVec(v) return string.format("%.1f|%.1f|%.1f", v.X, v.Y, v.Z) e
 -- we forward each hit to the host, which applies it to the real enemy.
 ---------------------------------------------------------------------------
 local DamageTypeCls
-pcall(function()
-    RegisterHook("/Script/CPPFPS.BaseWeapon:OnSpawnedProjectileDamagedOther",
-        function(self, Damage, DamagedActor, bHeadshot, bKilled)
-            if S.hosting or not S.joined then return end
-            table.insert(S.pendingHits, { target = DamagedActor:get(), dmg = Damage:get(), head = bHeadshot:get() })
-        end)
-end)
+S.rawHits = {}
 
 handlers.server["D"] = function(pc, p)
     local pos, dmg, head = vec(p, 1), tonumber(p[4]), p[5] == "1"
@@ -433,15 +429,34 @@ local function flushDeaths()
     if #S.pendingDeaths == 0 then return end
     local batch = S.pendingDeaths; S.pendingDeaths = {}
     local playerCls = classOf("/Script/CPPFPS.BasePlayer")
-    for _, c in ipairs(batch) do
-        if valid(c) and not c:IsA(playerCls) then
-            S.stats.deaths = S.stats.deaths + 1
-            S.toClients("K", fmtVec(c:K2_GetActorLocation()))
-        end
+    for _, d in ipairs(batch) do
+        S.stats.deaths = S.stats.deaths + 1
+        S.toClients("K", fmtVec(d.pos))   -- where it stood alive: the ragdoll may have flown off
     end
 end
 
 local function flushHits()
+    if #S.rawHits > 0 then
+        local batch = S.rawHits; S.rawHits = {}
+        local me = localPC()
+        local myPawn = S.client and S.client.pawn
+        local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+        for _, h in ipairs(batch) do
+            local ours = false
+            if valid(me) and valid(h.inst) and h.inst:GetFullName() == me:GetFullName() then ours = true end
+            if not ours and valid(h.causer) and valid(myPawn) then
+                local c = h.causer
+                if c:GetFullName() == myPawn:GetFullName() then ours = true
+                else
+                    local o = c:GetOwner()
+                    if valid(o) and o:GetFullName() == myPawn:GetFullName() then ours = true end
+                end
+            end
+            if ours and valid(h.target) and not h.target:IsA(playerCls) and h.dmg > 0 then
+                table.insert(S.pendingHits, { target = h.target, dmg = h.dmg, head = false })
+            end
+        end
+    end
     if #S.pendingHits == 0 then return end
     local batch = S.pendingHits; S.pendingHits = {}
     for _, h in ipairs(batch) do
@@ -474,11 +489,11 @@ S.every(250, function()
             seen[key] = true
             if c.bIsDead then
                 if aliveNPCs[key] then
+                    table.insert(S.pendingDeaths, { actor = c, pos = aliveNPCs[key] })
                     aliveNPCs[key] = nil
-                    table.insert(S.pendingDeaths, c)
                 end
             else
-                aliveNPCs[key] = true
+                aliveNPCs[key] = c:K2_GetActorLocation()   -- last position while alive
             end
         end
     end
@@ -700,6 +715,13 @@ S.every(30, function()
     local name, ammo = w:GetFullName(), w.CurrentAmmoInClip
     if shot.weap == name and shot.ammo and ammo < shot.ammo then
         S.toServer("F", shot.ammo - ammo)
+        -- Enemy copies on a client can't take damage (UE only damages pawns on the server), so the
+        -- host re-traces each shot from our camera in its own world and applies the damage there.
+        local pc = localPC()
+        local cam = pc.PlayerCameraManager:GetCameraLocation()
+        local rot = pc.PlayerCameraManager:GetCameraRotation()
+        S.stats.shotsSent = (S.stats.shotsSent or 0) + 1
+        S.toServer("SH", fmtVec(cam), string.format("%.2f|%.2f", rot.Yaw, rot.Pitch), shot.ammo - ammo, classPath(w))
     end
     shot.weap, shot.ammo = name, ammo
 end)
@@ -956,7 +978,6 @@ end
 ---------------------------------------------------------------------------
 S.wdup = {}
 local SETTLE_MS = 1500
-local function classPath(obj) return obj:GetClass():GetFullName():match("%s(.+)$") end
 
 S.every(500, function(dt)
     if not S.joined or not netDriver() then return end
@@ -1073,6 +1094,80 @@ S.every(1000, function()
         end
     end
 end)
+
+---------------------------------------------------------------------------
+-- Host: a partner's shot. Trace from their camera, damage what the bullet hits.
+---------------------------------------------------------------------------
+local weaponCDO = {}
+local function weaponStats(path)
+    local st = weaponCDO[path]
+    if st then return st end
+    st = { dmg = 20, pellets = 1, head = 2.0 }
+    local cdoPath = path:gsub("%.([^%.]+)$", ".Default__%1")
+    local cdo = StaticFindObject(cdoPath)
+    if valid(cdo) then
+        pcall(function() local d = cdo:GetDamage(); if type(d) == "number" and d > 0 then st.dmg = d end end)
+        pcall(function() local n = cdo:GetBulletCount(); if type(n) == "number" and n > 0 then st.pellets = math.min(n, 12) end end)
+        pcall(function() local h = cdo.HeadshotDamageMultiplier; if type(h) == "number" and h >= 1 then st.head = h end end)
+    end
+    weaponCDO[path] = st
+    return st
+end
+
+local function creditPartnerKill(npc, dmg)
+    local horde = FindFirstOf("HordeModeActor_C")
+    if valid(horde) then pcall(function() horde:OnPlayerKilledOther(dmg, dmg, npc, true, false, nil) end) end
+    S.stats.partnerKills = (S.stats.partnerKills or 0) + 1
+end
+S.creditPartnerKill = creditPartnerKill
+
+handlers.server["SH"] = function(pc, p)
+    local cam, yaw, pitch = vec(p, 1), tonumber(p[4]), tonumber(p[5])
+    local shots, wpath = math.min(tonumber(p[6]) or 1, 3), p[7] or ""
+    local puppet = pc.Pawn
+    S.stats.shots = (S.stats.shots or 0) + 1
+    if not yaw or not pitch then return end
+    local st = weaponStats(wpath)
+    local KML = StaticFindObject("/Script/Engine.Default__KismetMathLibrary")
+    local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    DamageTypeCls = DamageTypeCls or classOf("/Script/Engine.DamageType")
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    local charCls = classOf("/Script/CPPFPS.BaseCharacter")
+    local fwd = KML:GetForwardVector({ Pitch = pitch, Yaw = yaw, Roll = 0 })
+    local ignore = valid(puppet) and { puppet } or {}
+    for _ = 1, shots do
+        for _ = 1, st.pellets do
+            local dir = st.pellets > 1 and KML:RandomUnitVectorInConeInDegrees(fwd, 4.0) or fwd
+            local from = { X = cam.X + dir.X * 20, Y = cam.Y + dir.Y * 20, Z = cam.Z + dir.Z * 20 }
+            local to = { X = cam.X + dir.X * 15000, Y = cam.Y + dir.Y * 15000, Z = cam.Z + dir.Z * 15000 }
+            local hit = {}
+            local ok, blocked = pcall(function()
+                return KSL:LineTraceSingle(world(), from, to, 0, false, ignore, 0, hit, true,
+                    { R = 1, G = 0, B = 0, A = 1 }, { R = 0, G = 1, B = 0, A = 1 }, 0)
+            end)
+            S.stats.lastTrace = tostring(ok) .. "/" .. tostring(blocked)
+            if ok and blocked then
+                local actor
+                pcall(function() local a = hit.Actor; actor = (type(a) == "userdata" and a.Get) and a:Get() or a end)
+                pcall(function() S.stats.lastTrace = S.stats.lastTrace .. " " .. actor:GetFName():ToString() end)
+                if valid(actor) and actor:IsA(charCls) and not actor:IsA(playerCls) and not actor.bIsDead then
+                    -- the trace hits the capsule; call it a headshot when it lands near the top of it
+                    local al = actor:K2_GetActorLocation()
+                    local headshot = false
+                    pcall(function() headshot = hit.ImpactPoint.Z > al.Z + 55 end)
+                    pcall(function() hit.BoneName = FName(headshot and "head" or "spine_03", EFindName.FNAME_Add) end)
+                    local dmg = st.dmg
+                    -- the game reads headshots from the real mesh bone, which a capsule trace doesn't give
+                    if headshot and not actor.bImmuneToHeadshots then dmg = dmg * st.head end
+                    GS:ApplyPointDamage(actor, dmg, dir, hit, pc, valid(puppet) and puppet or nil, DamageTypeCls)
+                    S.stats.hits = S.stats.hits + 1
+                    if actor.bIsDead then creditPartnerKill(actor, dmg) end
+                end
+            end
+        end
+    end
+end
 
 -- Client -> host: our pose 20 times a second.
 S.every(50, function()

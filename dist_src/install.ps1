@@ -72,7 +72,9 @@ $cfgDir = Join-Path $env:LOCALAPPDATA "CPPFPS\Saved\Config\WindowsNoEditor"
 New-Item -ItemType Directory -Force $cfgDir | Out-Null
 $engine = Join-Path $cfgDir "Engine.ini"
 $text = if (Test-Path $engine) { Get-Content $engine -Raw } else { "" }
-if ($text -notmatch 'DefaultPlatformService\s*=\s*Null') {
+# (not in Steam mode: there the game's own Steam subsystem is used; the mod handles it)
+$steamMode = $keepConfig -and ($keepConfig -match '(?m)^\s*net\s*=\s*steam')
+if (-not $steamMode -and $text -notmatch 'DefaultPlatformService\s*=\s*Null') {
     if (Test-Path $engine) { Copy-Item $engine "$engine.bak_before_coop" -Force }
     Add-Content $engine "`r`n[OnlineSubsystem]`r`nDefaultPlatformService=Null`r`n" -Encoding ascii
 }
@@ -86,5 +88,6 @@ if (-not (Test-Path $cfg)) {
 }
 
 Write-Host ""
-Write-Host "Installed. In game: F5 host, F6 join, F7 leave, F8 pick arena." -ForegroundColor Green
-Write-Host "Host must open UDP port 7777 (router) or both use Porthole / Radmin VPN."
+Write-Host "Installed. In game press F4 for the co-op menu (host / join / leave / arena / network mode)." -ForegroundColor Green
+Write-Host "IP mode: the host opens UDP port 7777 (router) or both use Porthole / Radmin VPN."
+Write-Host "Steam mode (experimental, switch it in the F4 menu): join by the host's SteamID64, no port forwarding."

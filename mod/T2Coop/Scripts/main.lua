@@ -1,11 +1,12 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.4.5"
+local VERSION = "0.5.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
 local IP_DRIVER = "/Script/OnlineSubsystemUtils.IpNetDriver"
+local STEAM_DRIVER = "/Script/OnlineSubsystemSteam.SteamNetDriver"
 
 local S = {
     hosting = false,
@@ -103,7 +104,7 @@ local function forceIpDriver()
     e.NetDriverDefinitions:ForEach(function(_, el)
         local d = el:get()
         if d.DefName:ToString() == "GameNetDriver" then
-            d.DriverClassName = FName(IP_DRIVER, EFindName.FNAME_Add)
+            d.DriverClassName = FName(S.driverClass or IP_DRIVER, EFindName.FNAME_Add)
             d.DriverClassNameFallback = FName(IP_DRIVER, EFindName.FNAME_Add)
         end
     end)
@@ -164,8 +165,11 @@ function S.join(ip)
     local pc = FindFirstOf("PlayerController")
     S.lastIP = ip or "127.0.0.1"
     S.rejoin = nil
-    log("joining " .. S.lastIP)
-    KSL:ExecuteConsoleCommand(world(), "open " .. S.lastIP, pc)
+    local addr = S.lastIP
+    -- a SteamID64 (17 digits) means a Steam P2P address
+    if addr:match("^%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d$") then addr = "steam." .. addr end
+    log("joining " .. addr)
+    KSL:ExecuteConsoleCommand(world(), "open " .. addr, pc)
     keepClearingLoadingScreen(30000)
 end
 
@@ -339,8 +343,10 @@ function S.toServer(kind, ...) table.insert(outbox, { to = "server", msg = pack(
 function S.toClients(kind, ...) table.insert(outbox, { to = "clients", msg = pack(kind, ...) }) end
 function S.toClient(pc, kind, ...) table.insert(outbox, { to = "pc", pc = pc, msg = pack(kind, ...) }) end
 
+S.lastSeen = {}   -- host: remote controller FName -> os.time() of its last message
 local function dispatch(side, pc, text)
     if type(text) ~= "string" or text:sub(1, #PREFIX) ~= PREFIX then return end
+    if side == "server" and valid(pc) then S.lastSeen[pc:GetFName():ToString()] = os.time() end
     local parts = split(text:sub(#PREFIX + 1))
     local kind = table.remove(parts, 1)
     local h = handlers[side][kind]
@@ -1049,6 +1055,185 @@ handlers.server["WT"] = function(pc, p)
 end
 
 ---------------------------------------------------------------------------
+-- Player names. Every client tells the host its name (NM). Our client->host messages travel
+-- through ServerChangeName, which overwrites the PlayerState name, so the host keeps putting the
+-- real names back and everyone ignores names that look like our messages. The host announces
+-- who joined and who left.
+---------------------------------------------------------------------------
+S.names = {}       -- host: remote controller FName -> player name
+local goodNames = {}   -- PlayerState full name -> last real name seen
+local function cleanName(n)
+    n = tostring(n or "")
+    if n:sub(1, #PREFIX) == PREFIX then return nil end
+    n = n:gsub("[|~]", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    if n == "" then return nil end
+    return n:sub(1, 24)
+end
+
+-- Steam's own list of accounts on this PC; the most recent one is the one playing.
+-- (With the Null subsystem used for IP play, the engine only knows the computer name.)
+local function steamPersonaName()
+    local paths = { "../../../../../../config/loginusers.vdf",
+                    "C:/Program Files (x86)/Steam/config/loginusers.vdf",
+                    "C:/Program Files/Steam/config/loginusers.vdf" }
+    for _, path in ipairs(paths) do
+        local f = io.open(path, "r")
+        if f then
+            local text = f:read("*a")
+            f:close()
+            local first, recent
+            for id, body in text:gmatch('"(%d+)"%s*(%b{})') do
+                local name = body:match('"PersonaName"%s*"([^"]*)"')
+                local id64 = id
+                if name then
+                    first = first or { name = name, id = id64 }
+                    if body:match('"MostRecent"%s*"1"') then recent = { name = name, id = id64 } end
+                end
+            end
+            local pick = recent or first
+            if pick then return pick.name, pick.id end
+        end
+    end
+end
+
+function S.getMyName()
+    if S.myName then return S.myName end
+    local n = S.cfg and cleanName(S.cfg.name) or nil
+    local ok, name, id = pcall(steamPersonaName)
+    if ok and id then S.mySteamId = id end
+    if not n and ok and name then n = cleanName(name) end
+    if not n then
+        local pc = localPC()
+        if valid(pc) and valid(pc.PlayerState) then
+            local ok, v = pcall(function() return pc.PlayerState:GetPlayerName():ToString() end)
+            if ok then n = cleanName(v) end
+        end
+    end
+    if n then S.myName = n end
+    return n or "Player"
+end
+
+-- the name a player goes by (nil if not known yet)
+function S.stateName(ps)
+    if not valid(ps) then return nil end
+    local key = ps:GetFullName()
+    local me = localPC()
+    if valid(me) and valid(me.PlayerState) and me.PlayerState:GetFullName() == key then return S.getMyName() end
+    if S.hosting then
+        for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+            if valid(pc) and not pc:IsLocalController() and valid(pc.PlayerState)
+                and pc.PlayerState:GetFullName() == key then
+                local n = S.names[pc:GetFName():ToString()]
+                if n then return n end
+            end
+        end
+    end
+    local ok2, v = pcall(function() return ps:GetPlayerName():ToString() end)
+    local n = ok2 and cleanName(v) or nil
+    if n then goodNames[key] = n end
+    return goodNames[key]
+end
+function S.playerName(p)
+    local ok, ps = pcall(function() return p.PlayerState end)
+    if not ok then return nil end
+    return S.stateName(ps)
+end
+
+local function announce(text, except)
+    S.notify("CO-OP: " .. text)
+    local skip = valid(except) and except:GetFullName() or nil
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(pc) and not pc:IsLocalController() and pc:GetFullName() ~= skip then
+            S.toClient(pc, "NT", "CO-OP: " .. text)
+        end
+    end
+end
+
+-- remember our own name while we're not in a network game yet
+S.every(2000, function()
+    if not S.myName and not netDriver() then S.getMyName() end
+end)
+
+-- client: tell the host who we are (repeated; cheap, and survives reconnects)
+S.every(3000, function()
+    if S.joined and not S.hosting and netDriver() then S.toServer("NM", S.getMyName()) end
+end)
+
+handlers.server["NM"] = function(pc, p)
+    local key = pc:GetFName():ToString()
+    local n = cleanName(p[1]) or "Player"
+    local old = S.names[key]
+    S.names[key] = n
+    if not old then
+        announce(n .. " joined", pc)
+        S.toClient(pc, "NT", "CO-OP: connected to " .. S.getMyName())
+    end
+end
+
+-- host: put real names back into the PlayerStates; announce players who left
+S.every(250, function()
+    if not isServer() then return end
+    local present = {}
+    -- our own name too (with the Null subsystem the engine only knows the computer name)
+    local me = localPC()
+    if valid(me) and valid(me.PlayerState) then
+        local my = S.getMyName()
+        local ok, cur = pcall(function() return me.PlayerState:GetPlayerName():ToString() end)
+        if ok and cur ~= my then pcall(function() me.PlayerState.PlayerNamePrivate = my end) end
+    end
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(pc) and not pc:IsLocalController() then
+            local key = pc:GetFName():ToString()
+            -- a client that went back to its menu stays connected here until the engine's
+            -- timeout (about a minute); clients send every frame, so 5 s of silence = gone
+            local seen = S.lastSeen[key]
+            present[key] = not (seen and os.time() - seen > 5)
+            local n = S.names[key]
+            local ps = pc.PlayerState
+            if n and valid(ps) then
+                local ok, cur = pcall(function() return ps:GetPlayerName():ToString() end)
+                if ok and cur ~= n then
+                    if not pcall(function() ps.PlayerNamePrivate = n end) then
+                        pcall(function() FindFirstOf("GameModeBase"):ChangeName(pc, n, false) end)
+                    end
+                end
+            end
+        end
+    end
+    for key, n in pairs(S.names) do
+        if not present[key] then
+            S.names[key] = nil
+            S.lastSeen[key] = nil
+            announce(n .. " left")
+        end
+    end
+end)
+
+-- The HUD's "friendly under the crosshair" box shows "NONE" for players: show the partner's name.
+S.partnerName = nil
+S.hudNameHooked = false
+local function hookHudName()
+    local h = FindFirstOf("PlayerHUD2_C")
+    if not valid(h) then return end
+    local path = h:GetClass():GetFullName():gsub("^%S+%s+", "")
+    S.hudNameHooked = pcall(function()
+        RegisterHook(path .. ":Tick", function() end, function(self)
+            if not S.partnerName then return end
+            local hud = self:get()
+            local ok, t = pcall(function() return hud.FriendlyCharacterName:GetText():ToString() end)
+            if ok and t == "NONE" then
+                pcall(function() hud.FriendlyCharacterName:SetText(FText(S.partnerName)) end)
+                pcall(function() hud.FriendlySquadText:SetText(FText("CO-OP PARTNER")) end)
+            end
+        end)
+    end)
+    if S.hudNameHooked then log("HUD name hook on " .. path) end
+end
+S.every(1000, function()
+    if (S.hosting or S.joined) and not S.hudNameHooked then hookHudName() end
+end)
+
+---------------------------------------------------------------------------
 -- Partner markers: the game's objective icon (shows distance, visible through walls) attached
 -- to every other player. On the host the label also says when that player is down.
 ---------------------------------------------------------------------------
@@ -1064,14 +1249,15 @@ local function otherPlayers()
     return list
 end
 local function labelFor(p)
-    if not S.hosting then return "PARTNER" end
+    local name = S.playerName(p) or "PARTNER"
+    if not S.hosting then return name end
     for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
         if valid(pc) and not pc:IsLocalController() and valid(pc.Pawn) and pc.Pawn:GetFullName() == p:GetFullName() then
             local d = S.downed[pc:GetFName():ToString()]
-            return (d and d.down) and "PARTNER - DOWN" or "PARTNER"
+            return (d and d.down) and (name .. " - DOWN") or name
         end
     end
-    return "PARTNER"
+    return name
 end
 S.every(1000, function()
     if not netDriver() or not (S.hosting or S.joined) then return end
@@ -1098,6 +1284,7 @@ S.every(1000, function()
         end
         if e and valid(e.icon) then
             local label = labelFor(p)
+            S.partnerName = (label:gsub(" %- DOWN$", ""))
             if label ~= e.label then
                 e.label = label
                 pcall(function() e.icon:HackOverrideSubtitle(FText(label)) end)
@@ -1542,26 +1729,41 @@ S.every(500, function()
 end)
 
 ---------------------------------------------------------------------------
--- Engine.ini: hosting needs [OnlineSubsystem] DefaultPlatformService=Null (with the shipped
--- Steam/GOG services a listen server can't start). It's read at startup, so if it's missing we
--- add it now and it works from the next launch.
+-- Engine.ini. Two network modes (config.txt: net=ip|steam):
+--   ip    - IpNetDriver + [OnlineSubsystem] DefaultPlatformService=Null (the shipped Steam/GOG
+--           services can't host over IP). Needs UDP 7777 open on the host.
+--   steam - the game's default Steam subsystem + SteamNetDriver: join by SteamID64, no port forwarding.
+-- The game strips values equal to its defaults when it saves the file, so for Steam we only have to
+-- remove our Null line. The file is read at startup: a change works from the next launch.
 ---------------------------------------------------------------------------
-local function ensureEngineIni()
+local function ensureEngineIni(mode)
     local base = os.getenv("LOCALAPPDATA")
     if not base then return end
     local path = base .. "/CPPFPS/Saved/Config/WindowsNoEditor/Engine.ini"
     local f = io.open(path, "r")
     local text = f and f:read("*a") or ""
     if f then f:close() end
-    if text:find("DefaultPlatformService%s*=%s*Null") then S.iniOk = true return end
-    local w = io.open(path, "a")
-    if not w then log("could not update Engine.ini") return end
-    w:write("\n[OnlineSubsystem]\nDefaultPlatformService=Null\n")
-    w:close()
+    local hasNull = text:find("DefaultPlatformService%s*=%s*Null") ~= nil
+    S.netMode = mode
+    if mode == "steam" then
+        S.driverClass = STEAM_DRIVER
+        if not hasNull then S.iniOk = true return end
+        text = text:gsub("DefaultPlatformService%s*=%s*Null[^\n]*\n?", "")
+        local w = io.open(path, "w")
+        if not w then log("could not update Engine.ini") return end
+        w:write(text)
+        w:close()
+    else
+        S.driverClass = IP_DRIVER
+        if hasNull then S.iniOk = true return end
+        local w = io.open(path, "a")
+        if not w then log("could not update Engine.ini") return end
+        w:write("\n[OnlineSubsystem]\nDefaultPlatformService=Null\n")
+        w:close()
+    end
     S.iniOk = false
-    log("Engine.ini updated - RESTART THE GAME once for co-op hosting to work")
+    log("Engine.ini updated for net=" .. tostring(mode) .. " - RESTART THE GAME once")
 end
-pcall(ensureEngineIni)
 
 ---------------------------------------------------------------------------
 -- Player-facing controls.
@@ -1570,7 +1772,7 @@ pcall(ensureEngineIni)
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
-local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse" }
+local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "" }
 local function loadConfig()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return end
@@ -1584,8 +1786,13 @@ local function saveConfig()
     local f = io.open(CONFIG_PATH, "w")
     if not f then return end
     f:write("# Trepang2 Co-op settings\n")
-    f:write("# IP of the host (theirs: whatismyip.com; port 7777 UDP must be open, or use Porthole / Radmin VPN)\n")
+    f:write("# net=ip: the host's IP (whatismyip.com), UDP 7777 must be open - or use Porthole / Radmin VPN\n")
+    f:write("# network: ip (the host opens UDP 7777) or steam (no port forwarding)\n")
+    f:write("net=" .. cfg.net .. "\n")
+    f:write("# host to join: IP address, or the host's SteamID64 (17 digits) when net=steam\n")
     f:write("join_ip=" .. cfg.join_ip .. "\n")
+    f:write("# your name for other players (empty = your Steam name)\n")
+    f:write("name=" .. cfg.name .. "\n")
     f:write("# arena to host (F8 cycles through all arenas in game)\n")
     f:write("map=" .. cfg.map .. "\n")
     f:close()
@@ -1593,6 +1800,18 @@ end
 loadConfig()
 saveConfig()
 S.cfg = cfg
+pcall(ensureEngineIni, cfg.net)
+S.bootNet, S.bootIniOk, S.bootDriver = S.netMode, S.iniOk, S.driverClass
+
+-- switch ip <-> steam: rewrites Engine.ini for the next launch; this session keeps its mode
+function S.switchNetMode()
+    cfg.net = (cfg.net == "steam") and "ip" or "steam"
+    saveConfig()
+    pcall(ensureEngineIni, cfg.net)
+    S.netMode, S.driverClass = S.bootNet, S.bootDriver
+    if cfg.net == S.bootNet then S.iniOk = S.bootIniOk else S.iniOk = false end
+    S.notify("CO-OP: network mode " .. cfg.net:upper() .. (S.iniOk == false and " - restart the game" or ""))
+end
 
 -- On-screen notice: reuse the horde "now playing" popup (text + fade out).
 local POPUP_CLASS = "/Game/Maps/HordeMode/UI_HordeMusicPopup.UI_HordeMusicPopup_C"
@@ -1643,11 +1862,12 @@ pcall(function()
     RegisterKeyBind(Key.F6, function() onKey("join") end)
     RegisterKeyBind(Key.F7, function() onKey("leave") end)
     RegisterKeyBind(Key.F8, function() onKey("nextmap") end)
+    RegisterKeyBind(Key.F4, function() onKey("menu") end)
 end)
 
 -- Also read the keys through the game's own input (works whenever the game gets the key).
 local keyState = {}
-local KEYS = { F5 = "host", F6 = "join", F7 = "leave", F8 = "nextmap" }
+local KEYS = { F4 = "menu", F5 = "host", F6 = "join", F7 = "leave", F8 = "nextmap" }
 local keyStructs = {}
 S.every(50, function()
     local pc = localPC()
@@ -1676,6 +1896,10 @@ S.every(100, function()
     elseif action == "leave" then
         S.notify("CO-OP: leaving")
         S.leave()
+    elseif action == "netmode" then
+        S.switchNetMode()
+    elseif action == "menu" then
+        S.menuToggle()
     elseif action == "nextmap" then
         local list = listArenas()
         if #list == 0 then S.notify("CO-OP: no arenas found") return end
@@ -1687,5 +1911,213 @@ S.every(100, function()
         S.notify("CO-OP arena: " .. shortName(cfg.map) .. "  (" .. idx .. "/" .. #list .. ")  F5 = host")
     end
 end)
+
+---------------------------------------------------------------------------
+-- Co-op menu (F4): host / next arena / join (address typed in) / leave, player list.
+-- Built at runtime inside an instance of the horde music popup (its root is a CanvasPanel).
+-- Buttons are polled (IsPressed -> released while hovered = click); no delegates from Lua.
+-- Avoid VerticalBox/SetPadding/SetVisibility here: one of them crashed UE4SS.
+---------------------------------------------------------------------------
+local menu = { open = false, n = 0, buttons = {} }
+local MENU_X, MENU_Y, MENU_W, MENU_SCALE = 60, 230, 760, 0.62
+
+local function mk(tree, cls, name)
+    menu.n = menu.n + 1
+    return StaticConstructObject(StaticFindObject("/Script/UMG." .. cls), tree, FName("T2CMenu_" .. name .. menu.n, EFindName.FNAME_Add))
+end
+
+local function place(root, w, x, y, sx, sy)
+    local slot = root:AddChildToCanvas(w)
+    table.insert(menu.slots, { slot = slot, x = x, y = y })
+    slot:SetPosition({ X = MENU_X + x, Y = MENU_Y + y })
+    if sx then slot:SetSize({ X = sx, Y = sy }) else slot:SetAutoSize(true) end
+    return slot
+end
+
+local function label(tree, root, text, x, y, name)
+    local t = mk(tree, "TextBlock", name or "Text")
+    t:SetText(FText(text))
+    place(root, t, x, y)
+    return t
+end
+
+local function button(tree, root, text, x, y, w, action)
+    local b = mk(tree, "Button", "Btn")
+    local t = mk(tree, "TextBlock", "BtnText")
+    t:SetText(FText(text))
+    b:SetContent(t)
+    pcall(function() b:SetBackgroundColor({ R = 0.9, G = 0.27, B = 0.17, A = 1.0 }) end)
+    place(root, b, x, y, w, 44)
+    table.insert(menu.buttons, { b = b, t = t, action = action, down = false })
+    return b, t
+end
+
+local function menuLevelIsFrontEnd()
+    local ok, name = pcall(function()
+        GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+        return GS:GetCurrentLevelName(world(), true):ToString()
+    end)
+    return ok and name:find("FrontEnd") ~= nil
+end
+
+local function buildMenu()
+    local pc = localPC()
+    if not valid(pc) then return false end
+    local cls = classOf(POPUP_CLASS)
+    if not valid(cls) and LoadAsset then cls = LoadAsset(POPUP_CLASS) end
+    if not valid(cls) then return false end
+    local WBL = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    local w = WBL:Create(pc, cls, pc)
+    if not valid(w) then return false end
+    local tree = w.WidgetTree
+    local root = tree.RootWidget
+    menu.buttons = {}
+    menu.slots = {}
+    local bg = mk(tree, "Border", "Bg")
+    bg:SetBrushColor({ R = 0.0, G = 0.0, B = 0.0, A = 0.93 })
+    place(root, bg, -30, -20, MENU_W + 60, 680)
+    label(tree, root, "TREPANG2 CO-OP  v" .. VERSION, 0, 0, "Title")
+    menu.status = label(tree, root, "", 0, 40, "Status")
+    button(tree, root, "HOST", 0, 120, 370, "host")
+    button(tree, root, "NEXT ARENA  >", 390, 120, 370, "nextmap")
+    menu.arena = label(tree, root, "", 0, 172, "Arena")
+    label(tree, root, "Join address (IP, or SteamID64 in Steam mode):", 0, 215, "JoinHint")
+    local e = mk(tree, "EditableTextBox", "Addr")
+    e:SetText(FText(cfg.join_ip or ""))
+    place(root, e, 0, 252, 580, 48)
+    menu.edit = e
+    button(tree, root, "JOIN", 600, 252, 160, "join")
+    button(tree, root, "LEAVE CO-OP", 0, 320, 370, "leave")
+    button(tree, root, "CLOSE  (F4)", 390, 320, 370, "close")
+    menu.players = label(tree, root, "", 0, 390, "Players")
+    menu.net = label(tree, root, "", 0, 545, "Net")
+    button(tree, root, "SWITCH NETWORK MODE (IP / STEAM)", 0, 590, 760, "netmode")
+    -- the game's default font is big at 1080p-like UI scale: shrink the whole panel
+    pcall(function() root:SetRenderTransformPivot({ X = 0, Y = 0 }) end)
+    pcall(function() root:SetRenderScale({ X = MENU_SCALE, Y = MENU_SCALE }) end)
+    w:AddToViewport(300)
+    menu.w = w
+    return true
+end
+
+local function playerList()
+    local names = {}
+    if S.hosting or S.joined then
+        for _, ps in ipairs(FindAllOf("PlayerState") or {}) do
+            local n = S.stateName(ps)
+            if n then table.insert(names, n) end
+        end
+    end
+    if #names == 0 then names = { S.getMyName() } end
+    return names
+end
+
+-- keep the panel at the right edge of the screen (the game's own menus are on the left);
+-- the viewport size reads 0 for a moment after the loading screen, so this runs on every refresh
+local function layoutMenu()
+    local ok, x = pcall(function()
+        local WLL = StaticFindObject("/Script/UMG.Default__WidgetLayoutLibrary")
+        local pc = localPC()
+        local sx = tonumber(WLL:GetViewportSize(pc).X) or 0
+        local k = (tonumber(WLL:GetViewportScale(pc)) or 1) * MENU_SCALE
+        if sx <= 0 or k <= 0 then return nil end
+        return math.floor(sx / k - (MENU_W + 30) - 20 / k)
+    end)
+    if not ok or not x or x == menu.x then return end
+    menu.x = x
+    for _, e in ipairs(menu.slots or {}) do
+        pcall(function() e.slot:SetPosition({ X = x + e.x, Y = MENU_Y + e.y }) end)
+    end
+end
+
+local function refreshMenu()
+    if not valid(menu.w) then return end
+    layoutMenu()
+    local status
+    if S.hosting then
+        status = "HOSTING  " .. shortName(S.hostMap or cfg.map)
+    elseif S.joined then
+        status = netDriver() and ("CONNECTED  to " .. tostring(S.lastIP)) or ("CONNECTING  to " .. tostring(S.lastIP))
+    else
+        status = "OFFLINE  -  host an arena or join a friend"
+    end
+    if S.iniOk == false then status = "RESTART THE GAME to apply network settings" end
+    pcall(function() menu.status:SetText(FText(status)) end)
+    pcall(function() menu.arena:SetText(FText("Arena to host: " .. shortName(cfg.map))) end)
+    local list = playerList()
+    pcall(function() menu.players:SetText(FText("Players (" .. #list .. "):\n  " .. table.concat(list, "\n  "))) end)
+    local net
+    if cfg.net ~= S.netMode then
+        net = "Network: " .. cfg.net:upper() .. " after you restart the game"
+    elseif S.netMode == "steam" then
+        net = "Steam mode  -  your SteamID64: " .. tostring(S.mySteamId or "?")
+    else
+        net = "IP mode  -  host needs UDP port 7777 open"
+    end
+    pcall(function() menu.net:SetText(FText(net)) end)
+end
+
+local function setMenuInput(on)
+    local pc = localPC()
+    if not valid(pc) then return end
+    local WBL = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    if on then
+        pcall(function() WBL:SetInputMode_GameAndUIEx(pc, menu.edit, 0, false) end)
+        pc.bShowMouseCursor = true
+    elseif not menuLevelIsFrontEnd() then
+        pcall(function() WBL:SetInputMode_GameOnly(pc) end)
+        pc.bShowMouseCursor = false
+    end
+end
+
+function S.menuClose()
+    if valid(menu.w) then pcall(function() menu.w:RemoveFromParent() end) end
+    menu.w = nil
+    if menu.open then setMenuInput(false) end
+    menu.open = false
+end
+
+function S.menuOpen()
+    if menu.open and valid(menu.w) then return end
+    menu.x = nil
+    if not buildMenu() then log("menu: could not build") return end
+    menu.open = true
+    refreshMenu()
+    setMenuInput(true)
+end
+
+function S.menuToggle()
+    if menu.open and valid(menu.w) then S.menuClose() else S.menuOpen() end
+end
+
+S.every(0, function()
+    if not menu.open then return end
+    if not valid(menu.w) then menu.open = false return end   -- the map changed under it
+    for _, e in ipairs(menu.buttons) do
+        local ok, pressed = pcall(function() return e.b:IsPressed() end)
+        pressed = ok and pressed or false
+        if e.down and not pressed then
+            local okh, hovered = pcall(function() return e.b:IsHovered() end)
+            e.down = false
+            if okh and hovered then
+                if e.action == "close" then
+                    S.menuClose()
+                    return
+                end
+                if e.action == "join" then
+                    local okt, text = pcall(function() return menu.edit:GetText():ToString() end)
+                    text = okt and text:gsub("%s", "") or ""
+                    if text ~= "" then cfg.join_ip = text; saveConfig() end
+                end
+                if e.action == "host" or e.action == "join" or e.action == "leave" then S.menuClose() end
+                onKey(e.action)
+                return
+            end
+        end
+        e.down = pressed
+    end
+end)
+
+S.every(250, function() if menu.open then refreshMenu() end end)
 
 log("v" .. VERSION .. " loaded")

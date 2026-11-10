@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde Mode) - Beta
 
 ## Version
-0.4.5
+0.5.0
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -24,7 +24,8 @@ everything the game is missing for two (or more) players to fight the [b]Horde /
 
 [size=4][b]Features[/b][/size]
 [list]
-[*]Host any Horde arena, friends join by IP (F5 host, F6 join, F7 leave, F8 pick one of ~40 arenas)
+[*]In-game co-op menu (F4): host any Horde arena, type the friend's address and join, leave, player list
+[*]Player names (Steam) over partner markers, "joined" / "left" notices
 [*]Every player plays their own full character: first-person guns, HUD, slow-mo, abilities
 [*]Enemies, waves and money run on the host; shots, headshots, damage and deaths are synced
 [*]Enemies attack every player
@@ -47,15 +48,14 @@ the UE4SS mod loader (included) and the mod.
 
 [size=4][b]Playing over the internet[/b][/size]
 The host needs [b]UDP port 7777[/b] open on the router, or both players use a virtual LAN such as
-Porthole, Radmin VPN or ZeroTier. Put the host's IP into
-[i]Trepang2\CPPFPS\Binaries\Win64\ue4ss\Mods\T2Coop\config.txt[/i] ([i]join_ip=...[/i]) and press F6.
-(Steam connections without port forwarding are planned for v0.5.)
+Porthole, Radmin VPN or ZeroTier. The friend types the host's IP in the F4 menu and clicks Join.
+[b]Steam mode (experimental)[/b]: no port forwarding - both switch it in the F4 menu and restart the game, the friend joins with the host's SteamID64 shown in the menu.
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
 [*]Fire / incendiary damage from the partner is not synced yet
 [*]Ammo / health pickups are separate for each player
-[*]A "NONE" label may appear when the host aims at a partner
+[*]Steam mode is not yet tested between two different Steam accounts
 [*]Story missions are not supported yet
 [*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the
 [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
@@ -63,7 +63,6 @@ Porthole, Radmin VPN or ZeroTier. Put the host's IP into
 
 [size=4][b]Roadmap[/b][/size]
 [list]
-[*][b]v0.5[/b] - connect through Steam without port forwarding, Steam invites, co-op menu in game, player names
 [*][b]v0.6[/b] - campaign basics: missions together, level transitions, safehouse lobby, checkpoints
 [*][b]v0.7[/b] - campaign scripts: doors, elevators, objectives, cutscenes and dialogue for everyone, terminals and hostages
 [*][b]v0.8[/b] - bosses, special levels, side missions, difficulty for more players
@@ -83,5 +82,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.4.5.zip  (name: "Trepang2 Co-op v0.4.5 (beta)")
+- Main file: dist/Trepang2-Coop-v0.5.0.zip  (name: "Trepang2 Co-op v0.5.0 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

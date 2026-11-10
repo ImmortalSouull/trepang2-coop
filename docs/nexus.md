@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.7.0
+0.7.1
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -27,7 +27,7 @@ everything the game is missing for two (or more) players to fight the [b]Horde /
 [list]
 [*]In-game co-op menu (F4): host any Horde arena (also custom maps - load the map, press HOST), type the friend's address and join, leave, player list
 [*][b]Campaign (early)[/b]: in the safehouse or a mission the host presses F4 - HOST, friends join and follow the host through
-mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host; cutscenes play for everyone at once (partners are not written into them), radio and dialogue lines with subtitles are heard by all, doors locked/unlocked by the story match for everyone
+mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host; cutscenes wait until all players gather where they start ("waiting for players k/n" on screen, a marker on the spot), then play for everyone at once (partners are not written into them), radio and dialogue lines with subtitles are heard by all, doors locked/unlocked by the story match for everyone
 [*][b]Your look is shared[/b]: each player appears exactly as they dressed in the safehouse (outfit - 106, Patriarch, 107... - and jacket, gloves, pants, shoes colours and camo); partners are fully animated: walk, sprint, crouch, slide, jump,
 aiming up/down, weapon grip, dual wielding; their shots are seen and heard
 [*]Player names (Steam) over partner markers, "joined" / "left" notices
@@ -89,5 +89,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.7.0.zip  (name: "Trepang2 Co-op v0.7.0 (beta)")
+- Main file: dist/Trepang2-Coop-v0.7.1.zip  (name: "Trepang2 Co-op v0.7.1 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

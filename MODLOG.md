@@ -265,6 +265,16 @@
 43. **Двери** — `ABaseDoorActor` (`bIsLocked`, `bIsOpen`, `LockDoor/UnlockDoor/OpenDoor(front)`, BP `BP_BaseDoorNew_C`).
     Хост шлёт `DO|имя|locked|open|сторона` при изменении и все запертые/открытые новичку.
 
+44. **Ожидание игроков перед катсценой.** Хост, увидев новую катсцену (t < 1.5 с, игроков > 1): `Pause()`,
+    `SetDisableCameraCuts(true)`, каждый кадр ожидания — `SetManualCameraFade(0)` (сцены начинаются с
+    чёрного: затемнение остаётся на камере), `ResetIgnoreInputFlags`, пешку показать, вид на пешку
+    (`BaseGameMode:SetPlayerCutsceneMode(false,…)` этого НЕ снимает). Точка сбора — последний сработавший
+    триггер (< 3 с назад) или место хоста; радиус 700 (`T2C.gatherR` для тестов). Надпись вверху по центру
+    (`S.banner`, Border+TextBlock в корне нового UI_HordeMusicPopup, якорь 0.5/0) + `BP_ObjectiveIcon`
+    «СБОР»; клиентам `WB|k|n|точка`. Все на месте → `SetPlayerCutsceneMode(true,true)`, камеры обратно,
+    `JumpToSeconds(0)`, `Play()`. После смены уровня ждём и переподключающихся (число игроков до смены, 2 мин).
+    Язык надписи — `KismetInternationalizationLibrary:GetCurrentCulture()`.
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

@@ -36,8 +36,9 @@ CAMPAIGN (early)
 ----------------
 Play the campaign as usual. In the safehouse or a mission the host presses F4 -> HOST, the friend
 joins. Wherever the host goes (mission start, next level, checkpoint, restart) friends follow.
-If everyone is down, the group goes back to the last checkpoint. Cutscenes play for everyone at the same
-time, radio/dialogue lines and subtitles are shared, doors the story unlocks open for everyone.
+If everyone is down, the group goes back to the last checkpoint. Cutscenes wait until every player has come
+to where they start ("WAITING FOR PLAYERS 1/2" at the top of the screen, a marker on the spot), then play
+for everyone at the same time, radio/dialogue lines and subtitles are shared, doors the story unlocks open for everyone.
 
 SETTINGS
 --------

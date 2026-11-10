@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.0"
+local VERSION = "0.7.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -560,6 +560,8 @@ RegisterLoadMapPreHook(function()
     S.trigSeen = {}
     S.trQueue, S.trReadyAt = {}, nil
     if S.cut then S.cut = { active = false } end
+    S.gate, S.gateDone, S.lastTrig = nil, {}, nil
+    S.expectPlayers, S.expectUntil = S.lastCount or 1, os.clock() + 120
     S.dlgSeen = {}
     S.doorSeen = {}
     if S.me then S.me.down, S.me.max = false, nil end
@@ -2314,6 +2316,7 @@ S.every(250, function()
             S.trigSeen[name] = n           -- first look (new level / restored checkpoint): no event
         elseif n > was then
             S.trigSeen[name] = n
+            pcall(function() S.lastTrig = { loc = t:K2_GetActorLocation(), at = os.clock() } end)
             S.toClients("TR", name, n)
             S.stats.trSent = (S.stats.trSent or 0) + 1
         end
@@ -2442,10 +2445,122 @@ local function hidePlayersForCutscene(hide)
 end
 
 S.cut = { active = false }
+
+-- Cutscene gate: a cutscene only plays once every player has come to where it starts. The host
+-- holds it (paused, with its own controls and camera back), shows "WAITING FOR PLAYERS k/n" at the
+-- top of everybody's screen and a marker over the gathering point (the trigger that started it, or
+-- the host's spot). After a level change, players still reconnecting count too (for 2 minutes).
+local GATHER_R = 700
+S.gateDone = {}
+local function hostPlayerPawns()
+    local list = {}
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(pc) and valid(pc.Pawn) then table.insert(list, pc.Pawn) end
+    end
+    return list
+end
+S.every(1000, function() if S.hosting and netDriver() then S.lastCount = #(FindAllOf("PlayerController") or {}) end end)
+local function gateText(k, n)
+    return (S.isRussian() and "ОЖИДАНИЕ ИГРОКОВ " or "WAITING FOR PLAYERS ") .. k .. "/" .. n
+end
+local gateMark = {}
+local function showGate(k, n, point)
+    if not point or n == 0 then
+        S.banner(nil)
+        if valid(gateMark.icon) then pcall(function() gateMark.icon:K2_DestroyActor() end) end
+        gateMark.icon = nil
+        return
+    end
+    S.banner(gateText(k, n))
+    if not valid(gateMark.icon) then
+        pcall(function()
+            local cls = classOf(ICON_CLASS)
+            if not valid(cls) and LoadAsset then cls = LoadAsset(ICON_CLASS) end
+            local icon = world():SpawnActor(cls, { X = point.X, Y = point.Y, Z = point.Z + 60 }, { Pitch = 0, Yaw = 0, Roll = 0 })
+            icon.OwningPlayer = localPC()
+            pcall(function() icon:Sickle_ShowIcon() end)
+            pcall(function() icon:HackOverrideSubtitle(FText(S.isRussian() and "СБОР" or "GATHER HERE")) end)
+            gateMark.icon = icon
+        end)
+    end
+end
+local function gateCount(g)
+    local k, pawns = 0, hostPlayerPawns()
+    for _, p in ipairs(pawns) do
+        if dist2(p:K2_GetActorLocation(), g.point) <= (S.gatherR or GATHER_R) ^ 2 then k = k + 1 end
+    end
+    local n = #pawns
+    if os.clock() < (S.expectUntil or 0) then n = math.max(n, S.expectPlayers or 1) end
+    return k, n
+end
+local function holdCutscene(cur, name)
+    local pc = localPC()
+    local point
+    if S.lastTrig and os.clock() - S.lastTrig.at < 3 then point = S.lastTrig.loc end
+    if not point and valid(pc) and valid(pc.Pawn) then point = pc.Pawn:K2_GetActorLocation() end
+    pcall(function() cur:Pause() end)
+    -- a paused sequence keeps its camera: give the view back to the player while we wait
+    pcall(function() cur:SetDisableCameraCuts(true) end)
+    pcall(function() FindFirstOf("BaseGameMode_C"):SetPlayerCutsceneMode(false, false) end)
+    pcall(function() pc.PlayerCameraManager:StopCameraFade() end)
+    pcall(function() pc:SetViewTargetWithBlend(pc.Pawn, 0, 0, 0, false) end)
+    S.gate = { name = name, player = cur, point = point, sentAt = 0 }
+    -- the cutscene's own fade (many start from black) stays on the paused camera: keep it clear
+    S.every(0, function()
+        if S.gate ~= nil and S.gate.player == cur then
+            pcall(function() pc.PlayerCameraManager:SetManualCameraFade(0.0, { R = 0, G = 0, B = 0, A = 1 }, false) end)
+            pcall(function() pc.Pawn.PlayerHud:SetRenderOpacity(1) end)
+            -- and out of cutscene mode: controls on, our pawn shown
+            pcall(function() if pc:IsMoveInputIgnored() or pc:IsLookInputIgnored() then pc:ResetIgnoreInputFlags() end end)
+            pcall(function() if pc.Pawn.bHidden then pc.Pawn:SetActorHiddenInGame(false) end end)
+            pcall(function() if not same(pc:GetViewTarget(), pc.Pawn) then pc:SetViewTargetWithBlend(pc.Pawn, 0, 0, 0, false) end end)
+        else
+            return true
+        end
+    end)
+    log("cutscene " .. name .. " held until everyone is here")
+end
+local function releaseCutscene(g)
+    S.gate = nil
+    S.gateDone[g.name] = true
+    showGate(0, 0, nil)
+    S.toClients("WB", 0, 0)
+    pcall(function() FindFirstOf("BaseGameMode_C"):SetPlayerCutsceneMode(true, true) end)
+    -- from the start again, so the cutscene's camera takes over the view properly
+    pcall(function() g.player:SetDisableCameraCuts(false) end)
+    pcall(function() g.player:JumpToSeconds(0) end)
+    pcall(function() g.player:Play() end)
+    log("everyone is here - cutscene " .. g.name)
+end
+S.every(250, function()
+    local g = S.gate
+    if not g or not S.hosting then return end
+    if not valid(g.player) then S.gate = nil; showGate(0, 0, nil); S.toClients("WB", 0, 0); return end
+    local k, n = gateCount(g)
+    if k >= n then return releaseCutscene(g) end
+    showGate(k, n, g.point)
+    if os.clock() - g.sentAt >= 0.5 then
+        g.sentAt = os.clock()
+        S.toClients("WB", k, n, fmtVec(g.point))
+    end
+end)
+handlers.client["WB"] = function(_, p)
+    local k, n = tonumber(p[1]) or 0, tonumber(p[2]) or 0
+    showGate(k, n, n > 0 and vec(p, 3) or nil)
+end
+
 -- host side
 S.every(250, function()
-    if not S.hosting or not netDriver() then return end
+    if not S.hosting or not netDriver() or S.gate then return end
     local name, t = hostCutscene()
+    if name and not S.cut.active and not S.gateDone[name] and (t or 0) < 1.5 then
+        local players = #(FindAllOf("PlayerController") or {})
+        if os.clock() < (S.expectUntil or 0) then players = math.max(players, S.expectPlayers or 1) end
+        if players > 1 then
+            local gm = FindFirstOf("BaseGameMode_C")
+            return holdCutscene(gm.CurrentCutscene, name)
+        end
+    end
     local c = S.cut
     if name then
         if not c.active or c.name ~= name then
@@ -2882,6 +2997,55 @@ function S.notify(text)
         end
         if valid(popup) then popup["Fade in Music"](popup, FText(text)) end
     end)
+end
+
+-- Banner at the top centre of the screen (e.g. "WAITING FOR PLAYERS 1/2"). Built from Lua like the
+-- F4 menu: a text on the root canvas of a fresh popup widget, anchored top-centre. nil hides it.
+local banner = {}
+function S.banner(text)
+    pcall(function()
+        if not text then
+            if valid(banner.box) then banner.box:SetRenderOpacity(0) end
+            banner.text = nil
+            return
+        end
+        if not valid(banner.w) or not valid(banner.box) then
+            local cls = classOf(POPUP_CLASS)
+            if not valid(cls) and LoadAsset then cls = LoadAsset(POPUP_CLASS) end
+            if not valid(cls) then return end
+            local WBL = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+            local w = WBL:Create(world(), cls, localPC())
+            if not valid(w) then return end
+            local tree = w.WidgetTree
+            local box = StaticConstructObject(StaticFindObject("/Script/UMG.Border"), tree, FName("T2CBannerBox", EFindName.FNAME_Add))
+            local t = StaticConstructObject(StaticFindObject("/Script/UMG.TextBlock"), tree, FName("T2CBannerText", EFindName.FNAME_Add))
+            box:SetBrushColor({ R = 0, G = 0, B = 0, A = 0.6 })
+            box:SetContent(t)
+            local slot = tree.RootWidget:AddChildToCanvas(box)
+            slot:SetAnchors({ Minimum = { X = 0.5, Y = 0 }, Maximum = { X = 0.5, Y = 0 } })
+            slot:SetAlignment({ X = 0.5, Y = 0 })
+            slot:SetPosition({ X = 0, Y = 40 })
+            slot:SetAutoSize(true)
+            w:AddToViewport(60)
+            banner.w, banner.box, banner.t = w, box, t
+        end
+        if banner.text ~= text then
+            banner.t:SetText(FText("  " .. text .. "  "))
+            banner.text = text
+        end
+        banner.box:SetRenderOpacity(1)
+    end)
+end
+-- the game's language: Russian text for a Russian game
+function S.isRussian()
+    if S.ru == nil then
+        S.ru = false
+        pcall(function()
+            local c = StaticFindObject("/Script/Engine.Default__KismetInternationalizationLibrary"):GetCurrentCulture():ToString()
+            S.ru = c:sub(1, 2) == "ru"
+        end)
+    end
+    return S.ru
 end
 
 local arenas

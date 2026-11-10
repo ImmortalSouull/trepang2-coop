@@ -4,8 +4,9 @@ param([string[]]$Which = @("A"), [switch]$Kill)
 $roots = @{
   A = "C:\Program Files (x86)\Steam\steamapps\common\Trepang2\CPPFPS\Binaries\Win64"
   B = "C:\Users\PC\Trepang2_B\CPPFPS\Binaries\Win64"
+  C = "C:\Users\PC\Trepang2_C\CPPFPS\Binaries\Win64"
 }
-$pos = @{ A = @(0, 0); B = @(1300, 0) }
+$pos = @{ A = @(0, 0); B = @(1300, 0); C = @(0, 740) }
 if ($Kill) { Get-Process CPPFPS* -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 3 }
 foreach ($i in $Which) {
   $w = $roots[$i]

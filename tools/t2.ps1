@@ -6,6 +6,7 @@ param([string]$Inst = "A", [string[]]$Cmd = @(), [string]$Mod = "T2Dev", [int]$W
 $roots = @{
   A = "C:\Program Files (x86)\Steam\steamapps\common\Trepang2\CPPFPS\Binaries\Win64"
   B = "C:\Users\PC\Trepang2_B\CPPFPS\Binaries\Win64"
+  C = "C:\Users\PC\Trepang2_C\CPPFPS\Binaries\Win64"
 }
 $w = $roots[$Inst]
 $log = "$w\ue4ss\UE4SS.log"

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.2.2"
+local VERSION = "0.3.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -417,6 +417,12 @@ handlers.server["D"] = function(pc, p)
     local causer = valid(pc.Pawn) and pc.Pawn or nil
     GS:ApplyDamage(npc, dmg, pc, causer, DamageTypeCls)
     S.stats.hits = S.stats.hits + 1
+    -- Horde money is earned through the HOST player's kill event only; credit the partner's kills.
+    if npc.bIsDead then
+        local horde = FindFirstOf("HordeModeActor_C")
+        if valid(horde) then pcall(function() horde:OnPlayerKilledOther(dmg, dmg, npc, true, false, nil) end) end
+        S.stats.partnerKills = (S.stats.partnerKills or 0) + 1
+    end
 end
 
 S.stats = { hits = 0, deaths = 0 }
@@ -508,6 +514,8 @@ RegisterLoadMapPreHook(function()
     S.known = {}
     S.spawnIndex = 0
     if S.client then S.client = { pawn = nil, puppet = nil } end
+    S.icons = {}
+    S.wdup = {}
     if S.me then S.me.down, S.me.max = false, nil end
     S.downed = {}
 end)
@@ -734,7 +742,11 @@ local function setDown(p, down)
         p.Health = math.max(p.Health, (me.max or 200) * 0.5)
     end
     log(down and "you are DOWN - your partner revives you by standing next to you" or "revived")
-    if S.joined then S.toServer("DN", down and 1 or 0) else S.setDowned("host", down) end
+    S.notify(down and "CO-OP: you are DOWN - a partner must stand next to you" or "CO-OP: you are back on your feet")
+    if S.joined then S.toServer("DN", down and 1 or 0) else
+        S.setDowned("host", down)
+        if down then S.toClients("NT", "CO-OP: the host is DOWN - stand next to them to revive") end
+    end
 end
 
 S.every(0, function()
@@ -754,7 +766,25 @@ S.downed = {}       -- key ("host" or controller name) -> { down = bool, progres
 function S.setDowned(key, down)
     S.downed[key] = { down = down, progress = 0 }
 end
-handlers.server["DN"] = function(pc, p) S.setDowned(pc:GetFName():ToString(), p[1] == "1") end
+handlers.server["DN"] = function(pc, p)
+    local down = p[1] == "1"
+    S.setDowned(pc:GetFName():ToString(), down)
+    if down then
+        local text = "CO-OP: your partner is DOWN - stand next to them to revive"
+        S.notify(text)
+        for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+            if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+                S.toClient(other, "NT", text)
+            end
+        end
+    end
+end
+-- A notice for everybody (host shows it locally, clients get "NT").
+function S.say(text)
+    S.notify(text)
+    S.toClients("NT", (text:gsub("|", "/")))
+end
+handlers.client["NT"] = function(_, p) S.notify(p[1] or "") end
 handlers.client["RV"] = function() local p = myPawn(); if valid(p) and me.down then setDown(p, false) end end
 
 local function playerPositions()
@@ -783,7 +813,12 @@ S.every(250, function(dt)
                 local od = S.downed[other]
                 if other ~= key and not (od and od.down) and dist2(oinfo.pos, info.pos) <= REVIVE_DIST ^ 2 then helper = true end
             end
+            local before = d.progress
             d.progress = helper and (d.progress + dt) or 0
+            -- progress notice about once a second while someone is reviving
+            if d.progress > 0 and math.floor(d.progress / 1000) ~= math.floor(before / 1000) then
+                S.say(string.format("CO-OP: reviving... %d%%", math.min(99, math.floor(d.progress * 100 / REVIVE_TIME))))
+            end
             if d.progress >= REVIVE_TIME then
                 d.down, d.progress = false, 0
                 if key == "host" then
@@ -911,6 +946,133 @@ handlers.server["WP"] = function(pc, p)
     if valid(cur) then pcall(function() cur:K2_DestroyActor() end) end
     log("puppet of " .. pc:GetFName():ToString() .. " now holds " .. (path:match("([^%.]+)$") or path))
 end
+
+---------------------------------------------------------------------------
+-- Weapons lying around (level weapons, guns dropped by dead enemies) exist on a client only as
+-- network copies, and the game can't fire a network copy. So the client places its OWN local
+-- weapon of the same type on top of each loose copy and hides the copy. The player picks up the
+-- local one the normal way; we then tell the host to remove the original so nobody else gets it.
+-- When the original is taken by someone else (it gets an owner or disappears), our double goes too.
+---------------------------------------------------------------------------
+S.wdup = {}
+local SETTLE_MS = 1500
+local function classPath(obj) return obj:GetClass():GetFullName():match("%s(.+)$") end
+
+S.every(500, function(dt)
+    if not S.joined or not netDriver() then return end
+    local mine = S.client.pawn
+    local seen = {}
+    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+        if w.Role == 1 and not valid(w:GetOwner()) then          -- loose network copy
+            local key = w:GetFullName()
+            seen[key] = true
+            local e = S.wdup[key]
+            if not e then e = { proxy = w, age = 0 }; S.wdup[key] = e end
+            e.age = e.age + dt
+            if not e.dup and e.age >= SETTLE_MS then            -- let a dropped gun land first
+                local ok, dup = pcall(function()
+                    return world():SpawnActor(w:GetClass(), w:K2_GetActorLocation(), w:K2_GetActorRotation())
+                end)
+                if ok and valid(dup) then
+                    e.dup, e.cls = dup, classPath(w)
+                    w:SetActorHiddenInGame(true)
+                    w:SetActorEnableCollision(false)
+                end
+            end
+        end
+    end
+    for key, e in pairs(S.wdup) do
+        local dupOwner = valid(e.dup) and e.dup:GetOwner() or nil
+        local weTookIt = valid(dupOwner) and valid(mine) and dupOwner:GetFullName() == mine:GetFullName()
+        if weTookIt and not e.reported then
+            e.reported = true
+            local l = valid(e.proxy) and e.proxy:K2_GetActorLocation() or e.dup:K2_GetActorLocation()
+            S.toServer("WT", fmtVec(l), e.cls or "")
+        end
+        if not seen[key] then
+            -- the original is gone or someone holds it: drop our double unless it's in our hands
+            if valid(e.dup) and not weTookIt and not valid(dupOwner) then pcall(function() e.dup:K2_DestroyActor() end) end
+            S.wdup[key] = nil
+        end
+    end
+end)
+
+-- Host: a client picked up its copy of a loose weapon; remove the original.
+handlers.server["WT"] = function(pc, p)
+    local pos, cls = vec(p, 1), p[4]
+    local best, bd
+    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+        if not valid(w:GetOwner()) and (cls == "" or classPath(w) == cls) then
+            local d = dist2(w:K2_GetActorLocation(), pos)
+            if d < 400 * 400 and (not bd or d < bd) then best, bd = w, d end
+        end
+    end
+    if valid(best) then pcall(function() best:K2_DestroyActor() end) end
+end
+
+---------------------------------------------------------------------------
+-- Partner markers: the game's objective icon (shows distance, visible through walls) attached
+-- to every other player. On the host the label also says when that player is down.
+---------------------------------------------------------------------------
+local ICON_CLASS = "/Game/UI/Objective/BP_ObjectiveIcon.BP_ObjectiveIcon_C"
+S.icons = {}   -- target full name -> { icon = actor, label = string }
+local function otherPlayers()
+    local list = {}
+    local me = localPC()
+    local mine = valid(me) and valid(me.Pawn) and me.Pawn:GetFullName() or ""
+    for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        if p:GetFullName() ~= mine and not p.bHidden and not p.bIsDead then table.insert(list, p) end
+    end
+    return list
+end
+local function labelFor(p)
+    if not S.hosting then return "PARTNER" end
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(pc) and not pc:IsLocalController() and valid(pc.Pawn) and pc.Pawn:GetFullName() == p:GetFullName() then
+            local d = S.downed[pc:GetFName():ToString()]
+            return (d and d.down) and "PARTNER - DOWN" or "PARTNER"
+        end
+    end
+    return "PARTNER"
+end
+S.every(1000, function()
+    if not netDriver() or not (S.hosting or S.joined) then return end
+    local me = localPC()
+    local alive = {}
+    for _, p in ipairs(otherPlayers()) do
+        local key = p:GetFullName()
+        alive[key] = true
+        local e = S.icons[key]
+        if not e or not valid(e.icon) then
+            local cls = classOf(ICON_CLASS)
+            if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(ICON_CLASS) end) end
+            if valid(cls) then
+                local l = p:K2_GetActorLocation()
+                local ok, icon = pcall(function() return world():SpawnActor(cls, { X = l.X, Y = l.Y, Z = l.Z + 110 }, { Pitch = 0, Yaw = 0, Roll = 0 }) end)
+                if ok and valid(icon) then
+                    icon.OwningPlayer = me
+                    pcall(function() icon:K2_AttachToActor(p, FName("None"), 1, 1, 1, false) end)
+                    pcall(function() icon:Sickle_ShowIcon() end)
+                    e = { icon = icon, label = nil }
+                    S.icons[key] = e
+                end
+            end
+        end
+        if e and valid(e.icon) then
+            local label = labelFor(p)
+            if label ~= e.label then
+                e.label = label
+                pcall(function() e.icon:HackOverrideSubtitle(FText(label)) end)
+            end
+        end
+    end
+    for key, e in pairs(S.icons) do
+        if not alive[key] then
+            if valid(e.icon) then pcall(function() e.icon:K2_DestroyActor() end) end
+            S.icons[key] = nil
+        end
+    end
+end)
 
 -- Client -> host: our pose 20 times a second.
 S.every(50, function()

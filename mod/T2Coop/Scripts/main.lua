@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.4.0"
+local VERSION = "0.4.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -688,8 +688,24 @@ handlers.client["U"] = function(_, p)
     c.hudParts = parts
 end
 
--- The widget's own Tick keeps rewriting some fields from this machine's (empty) game state,
--- so re-apply the host's values often.
+-- The widget's own Tick rewrites "enemies left" from this machine's (empty) game state every frame,
+-- so put the host's value back right after its Tick (post-hook; only a SetText).
+S.hudTickHooked = false
+local function hookHudTick()
+    if S.hudTickHooked then return end
+    S.hudTickHooked = pcall(function()
+        RegisterHook("/Game/Maps/HordeMode/SideMissionStatusUI.SideMissionStatusUI_C:Tick", function() end, function(self)
+            local c = S.client
+            if not S.joined or not c or not c.hudParts or not valid(c.hud) then return end
+            local ui = self:get()
+            if ui:GetFullName() ~= c.hud:GetFullName() then return end
+            pcall(function() ui.EnemiesTextBox:SetText(FText(c.hudParts[3] or "")) end)
+        end)
+    end)
+end
+S.every(1000, function() if S.joined and not S.hudTickHooked then hookHudTick() end end)
+
+-- Other fields: re-apply the host's values often.
 S.every(100, function()
     local c = S.client
     if not S.joined or not c or not valid(c.hud) or not c.hudParts then return end

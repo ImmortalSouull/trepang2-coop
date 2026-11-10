@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.6.4"
+local VERSION = "0.6.5"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1689,26 +1689,201 @@ local function otherBodies()
     return list
 end
 
--- The body the game gives a player pawn is a generic merc NPC. Show Subject 106 instead (the
--- game's own 106 character model, same skeleton, so all animations work). config.txt: model=soldier
--- keeps the merc.
+-- How a player looks: exactly what they picked in their own game (safehouse outfit + clothes
+-- colours). Every machine sends its player's outfit (PlayerBP.CurrentOutfit) and the four clothes
+-- classes of the saved customization; the host passes them on to everyone. On the receiving side
+-- the game's own functions dress that player's pawn (SetPlayerOutfit, "Apply Player Customization
+-- Mats"); the game builds the full-body look in the pawn's ShadowMesh (used for its shadow), and
+-- we put that mesh + materials on the visible body.
+-- config.txt look=106 forces the Light 106 suit for everyone instead.
 local MODEL_106 = "/Game/Character/NPC/Special/Light106/rig_Light106.rig_Light106"
-local function wear106(p)
-    if (S.cfgModel or "106") == "soldier" then return end
-    local m = StaticFindObject(MODEL_106)
-    if not valid(m) and LoadAsset then pcall(function() m = LoadAsset(MODEL_106) end) end
+local CUSTOM_KEYS = { "Arms_2_6E5167D6464C9E7A2C79509A707C6BB1", "Gloves_6_F9D6F0E04D1A5EB26E6660B1F83B1FF7",
+                      "Pants_9_2E8B2CE7414E648840B7159876B65CFC", "Shoes_12_3AEBAAB5450DA86CA964D3BFB03767BB" }
+S.looks = {}   -- player id -> { key = "outfit|a|g|p|s", outfit, classes = {4 paths} }
+
+-- Our clothes colours exactly as the game worked them out here: the legs body's material (for the
+-- customizable outfits it is a dynamic instance of the clothes material with the chosen tints and
+-- camo). Sent as "parentPath;V,name,r,g,b,a;S,name,v;T,name,path" - the receiver rebuilds it.
+local function objPath(o) return o:GetFullName():match("%s(.+)$") end
+local function clothesMaterial(pawn)
+    local out = ""
+    pcall(function()
+        local mt = pawn.MeshLegs:GetMaterial(0)
+        if not valid(mt) or not mt:GetClass():GetFName():ToString():find("Dynamic") then return end
+        local parent = mt.Parent
+        if not valid(parent) or not parent:GetFName():ToString():find("CustomBase") then return end
+        local list = { objPath(parent) }
+        mt.VectorParameterValues:ForEach(function(_, el)
+            local v = el:get(); local c = v.ParameterValue
+            table.insert(list, string.format("V,%s,%.3f,%.3f,%.3f,%.3f", v.ParameterInfo.Name:ToString(), c.R, c.G, c.B, c.A))
+        end)
+        mt.ScalarParameterValues:ForEach(function(_, el)
+            local v = el:get()
+            table.insert(list, string.format("S,%s,%.3f", v.ParameterInfo.Name:ToString(), v.ParameterValue))
+        end)
+        mt.TextureParameterValues:ForEach(function(_, el)
+            local v = el:get()
+            if valid(v.ParameterValue) then table.insert(list, "T," .. v.ParameterInfo.Name:ToString() .. "," .. objPath(v.ParameterValue)) end
+        end)
+        -- The body never shows the jacket and gloves in single player (nobody sees it), so the game
+        -- only colours them on the first-person arms. Carry those colours over to the body's zones:
+        -- sleeves (camo layer 1) <- jacket colour + camo, arm patch (tint 01) <- jacket accent,
+        -- torso (camo layer 3) <- inner shirt, gloves (tint 02) <- gloves colour.
+        for i = 0, pawn.Mesh1P:GetNumMaterials() - 1 do
+            local am = pawn.Mesh1P:GetMaterial(i)
+            local pname = ""
+            pcall(function() pname = am.Parent:GetFName():ToString() end)
+            local vals, tex = {}, {}
+            pcall(function()
+                am.VectorParameterValues:ForEach(function(_, el)
+                    local v = el:get(); vals[v.ParameterInfo.Name:ToString()] = v.ParameterValue
+                end)
+                am.TextureParameterValues:ForEach(function(_, el)
+                    local v = el:get(); if valid(v.ParameterValue) then tex[v.ParameterInfo.Name:ToString()] = objPath(v.ParameterValue) end
+                end)
+            end)
+            local function put(target, c)
+                if c then table.insert(list, string.format("V,%s,%.3f,%.3f,%.3f,%.3f", target, c.R, c.G, c.B, c.A)) end
+            end
+            if pname:find("Arms_CustomBase") then
+                put("Camo_01_Tint", vals["Color_Tint_01"])
+                put("Color_Tint_01", vals["Color_Tint_02"])
+                put("Camo_03_Tint", vals["Color_Tint_03"])
+                put("Camo_01_UV", vals["Camo_01_UV"])
+                if tex["Camo_01_Tex"] then table.insert(list, "T,Camo_01_Tex," .. tex["Camo_01_Tex"]) end
+            elseif pname:find("Gloves_CustomBase") then
+                put("Color_Tint_02", vals["Color_Tint_01"])
+            end
+        end
+        out = table.concat(list, ";")
+    end)
+    return out
+end
+
+local function loadObj(path)
+    local o = StaticFindObject(path)
+    if not valid(o) and LoadAsset then pcall(function() o = LoadAsset(path) end) end
+    return valid(o) and o or nil
+end
+
+-- rebuild a sent clothes material on the body
+local function wearClothes(p, data)
+    local parts = {}
+    for part in data:gmatch("[^;]+") do table.insert(parts, part) end
+    local parent = loadObj(parts[1] or "")
+    if not parent then return false end
+    local mid = p.Mesh:CreateDynamicMaterialInstance(0, parent, FName("T2CoopClothes", EFindName.FNAME_Add))
+    if not valid(mid) then return false end
+    for i = 2, #parts do
+        local f = {}
+        for x in parts[i]:gmatch("[^,]+") do table.insert(f, x) end
+        local name = FName(f[2] or "", EFindName.FNAME_Add)
+        if f[1] == "V" then
+            mid:SetVectorParameterValue(name, { R = tonumber(f[3]) or 0, G = tonumber(f[4]) or 0, B = tonumber(f[5]) or 0, A = tonumber(f[6]) or 1 })
+        elseif f[1] == "S" then
+            mid:SetScalarParameterValue(name, tonumber(f[3]) or 0)
+        elseif f[1] == "T" then
+            local tex = loadObj(f[3] or "")
+            if tex then mid:SetTextureParameterValue(name, tex) end
+        end
+    end
+    return true
+end
+
+local function myLook(pawn)
+    local outfit = 0
+    pcall(function() outfit = pawn.CurrentOutfit end)
+    local parts = {}
+    pcall(function()
+        local c = {}
+        FindFirstOf("GameInstanceBP_C"):GetSavedPlayerCustomization(c)
+        for i, k in ipairs(CUSTOM_KEYS) do
+            local v = c[k]
+            parts[i] = (valid(v) and v:GetFullName():match("%s(.+)$")) or ""   -- v is the class itself
+        end
+    end)
+    for i = 1, 4 do parts[i] = parts[i] or "" end
+    return tostring(outfit) .. "|" .. table.concat(parts, "|") .. "|" .. clothesMaterial(pawn)
+end
+S.myLook = myLook
+
+-- the visible body takes the full-body look the game built: the shadow body for special outfits,
+-- the coloured clothes (on the legs body, see wearLook) for the customizable ones
+local function copyShadowLook(p, src)
+    local sh, mesh = src or p.ShadowMesh, p.Mesh
+    local m = sh.SkeletalMesh
     if not valid(m) then return end
-    local mesh = p.Mesh
-    if same(mesh.SkeletalMesh, m) then return end
-    mesh:SetSkeletalMesh(m, false)
-    -- the merc's material overrides would stay on the new mesh: put 106's own materials back
-    for i = 1, #m.Materials do
-        pcall(function() mesh:SetMaterial(i - 1, m.Materials[i].MaterialInterface) end)
+    if not same(mesh.SkeletalMesh, m) then mesh:SetSkeletalMesh(m, false) end
+    for i = 0, sh:GetNumMaterials() - 1 do
+        local mat = sh:GetMaterial(i)
+        if valid(mat) and not same(mesh:GetMaterial(i), mat) then mesh:SetMaterial(i, mat) end
     end
 end
 
+local function wearForced106(p)
+    local m = StaticFindObject(MODEL_106)
+    if not valid(m) and LoadAsset then pcall(function() m = LoadAsset(MODEL_106) end) end
+    if not valid(m) or same(p.Mesh.SkeletalMesh, m) then return end
+    p.Mesh:SetSkeletalMesh(m, false)
+    for i = 1, #m.Materials do pcall(function() p.Mesh:SetMaterial(i - 1, m.Materials[i].MaterialInterface) end) end
+end
+
+-- dress body pawn p in the look sent for its player (once per change); then mirror the shadow body
+local function wearLook(p)
+    if (S.cfgModel or "player") == "106" then return wearForced106(p) end
+    local look = S.looks[S.pidOf(p) or -2]
+    local key = p:GetFullName()
+    S.dressed = S.dressed or {}
+    S.dressSrc = S.dressSrc or {}
+    if look and S.dressed[key] ~= look.key then
+        S.dressed[key] = look.key
+        pcall(function() p:SetPlayerOutfit(look.outfit) end)   -- builds the full body in ShadowMesh
+        local clothes = false
+        if look.mat and look.mat ~= "" then
+            -- customizable outfit: the shadow body's mesh, with the sender's coloured clothes material
+            pcall(function()
+                local m = p.ShadowMesh.SkeletalMesh
+                if not same(p.Mesh.SkeletalMesh, m) then p.Mesh:SetSkeletalMesh(m, false) end
+            end)
+            local ok, res = pcall(wearClothes, p, look.mat)
+            clothes = ok and res
+        end
+        S.dressSrc[key] = clothes and "clothes" or "ShadowMesh"
+        log("dressed " .. p:GetFName():ToString() .. " as outfit " .. look.outfit)
+    end
+    if S.dressSrc[key] ~= "clothes" then copyShadowLook(p, p.ShadowMesh) end
+end
+
+handlers.server["CU"] = function(pc, p)
+    local pid = S.pidOf(pc.Pawn)
+    if not pid then return end
+    local key = table.concat({ p[1] or "0", p[2] or "", p[3] or "", p[4] or "", p[5] or "", p[6] or "" }, "|")
+    S.looks[pid] = { key = key, outfit = tonumber(p[1]) or 0, classes = { p[2] or "", p[3] or "", p[4] or "", p[5] or "" }, mat = p[6] or "" }
+end
+handlers.client["CU"] = function(_, p)
+    local pid = tonumber(p[1])
+    if not pid then return end
+    local key = table.concat({ p[2] or "0", p[3] or "", p[4] or "", p[5] or "", p[6] or "", p[7] or "" }, "|")
+    S.looks[pid] = { key = key, outfit = tonumber(p[2]) or 0, classes = { p[3] or "", p[4] or "", p[5] or "", p[6] or "" }, mat = p[7] or "" }
+end
+-- every 2 s: our own look (and, on the host, everybody's) - cheap, and covers late joiners
+S.every(2000, function()
+    if not netDriver() then return end
+    if S.joined then
+        local pawn = S.client and S.client.pawn
+        if valid(pawn) then S.toServer("CU", myLook(pawn)) end
+    elseif S.hosting then
+        local pc = localPC()
+        if not valid(pc) or not valid(pc.Pawn) or #(FindAllOf("PlayerController") or {}) < 2 then return end
+        S.toClients("CU", S.pidOf(pc.Pawn) or -1, myLook(pc.Pawn))
+        for pid, look in pairs(S.looks) do S.toClients("CU", pid, look.key) end
+    end
+end)
+
 local function showAsThirdPerson(p)
-    pcall(wear106, p)
+    pcall(wearLook, p)
+    -- the visible body casts the shadow now; the shadow-only copy would make a second one
+    pcall(function() if p.ShadowMesh.bCastHiddenShadow then p.ShadowMesh:SetCastHiddenShadow(false) end end)
     pcall(function()
         if p.Mesh.bHiddenInGame then p.Mesh:SetHiddenInGame(false, false) end
         if not p.Mesh:IsVisible() then p.Mesh:SetVisibility(true, false) end
@@ -2376,7 +2551,7 @@ end
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
-local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", model = "106" }
+local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player" }
 local function loadConfig()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return end
@@ -2406,7 +2581,7 @@ end
 loadConfig()
 saveConfig()
 S.cfg = cfg
-S.cfgModel = cfg.model
+S.cfgModel = cfg.look
 pcall(ensureEngineIni, cfg.net)
 S.bootNet, S.bootIniOk, S.bootDriver = S.netMode, S.iniOk, S.driverClass
 

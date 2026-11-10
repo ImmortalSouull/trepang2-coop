@@ -231,6 +231,22 @@
     Инструменты: `tools/anim_probe.ps1` (жмёт клавиши в окне, пишет состояние анимации),
     `tools/action_shots.ps1 -Actor A|B` (лист кадров по действиям), `key.ps1 -Vks/-GapMs/-RClick`.
 
+40. **Внешность игрока (ванильная).** Костюм — `PlayerBP.CurrentOutfit` (EPlayerOutfit 0..7: 0 = 106 обычный,
+    1-2 заключённый, 3 = 107, 4 = Патриарх, 5 = Lawyer Thug, 6 = Jigglyboi, 7 = Light 106), сохраняется
+    `GameInstance:SavePlayerOutfit`/`GetPlayerSavedOutfit`; одежда — 4 класса `BP_PC_Arms/Gloves/Pants/Shoes_*`
+    (`GetSavedPlayerCustomization`/`SetNewPlayerCustomization`, список — CDO `BP_PlayerCustomizationList_C`).
+    Полное тело для тени игра собирает в `ShadowMesh` (`SetPlayerOutfit`); цвета одежды кладёт в MID ног
+    (`MeshLegs`, родитель `MI_PlayerPants_CustomBase`) и рук (`Mesh1P`: `M_FirstPersonArms/Gloves_CustomBase`).
+    На ЧУЖОЙ пешке `SetPlayerOutfit` меняет только ShadowMesh, а `Apply Player Customization Mats` даёт не
+    те цвета — поэтому отправитель шлёт готовые параметры своего MID ног (+ цвета рук разложены по зонам
+    тела: Camo_01 рукава, Color_Tint_01 нашивка, Camo_03 торс, Color_Tint_02 перчатки; 07 наколенники,
+    08 обувь, Camo_02 штаны, Camo_04 маска), получатель создаёт такой же MID на теле. Особые костюмы —
+    копия ShadowMesh (меш + материалы). Сообщение `CU`. Меню бункера (`BP_SafeHouseCustomizeInteract`,
+    удерживать F) у гостя работает как в одиночке. Эмулированный клик по «Применить» не срабатывает (и у
+    хоста тоже) — тестами вызывать `UI_PlayerCustomize_C:ApplySelection()`. Две копии игры делят одно
+    сохранение настроек — тесты одежды затирают настройки пользователя (восстанавливать из бэкапа).
+    config `look=player|106`.
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

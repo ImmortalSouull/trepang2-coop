@@ -4,14 +4,14 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.6.4
+0.6.5
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
 
 ## Short summary (Nexus "Brief overview", max ~350 characters)
 Play Trepang2 together: co-op Horde (Survival) and, in early form, the story campaign. Host from the F4
-menu, friends join by IP or Steam invite. Partners appear as Subject 106 with full animations; shared
+menu, friends join by IP or Steam invite. Everyone sees your safehouse outfit and colours, full animations; shared
 enemies, money, down & revive, checkpoints. Beta - the whole campaign in co-op is the goal for v1.0.
 
 ## Description (paste into the Nexus description editor, BBCode)
@@ -28,7 +28,7 @@ everything the game is missing for two (or more) players to fight the [b]Horde /
 [*]In-game co-op menu (F4): host any Horde arena (also custom maps - load the map, press HOST), type the friend's address and join, leave, player list
 [*][b]Campaign (early)[/b]: in the safehouse or a mission the host presses F4 - HOST, friends join and follow the host through
 mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host
-[*][b]Partners look like Subject 106[/b] (the game's own model) and are fully animated: walk, sprint, crouch, slide, jump,
+[*][b]Your look is shared[/b]: each player appears exactly as they dressed in the safehouse (outfit - 106, Patriarch, 107... - and jacket, gloves, pants, shoes colours and camo); partners are fully animated: walk, sprint, crouch, slide, jump,
 aiming up/down, weapon grip, dual wielding; their shots are seen and heard
 [*]Player names (Steam) over partner markers, "joined" / "left" notices
 [*]Every player plays their own full character: first-person guns, HUD, slow-mo, abilities
@@ -89,5 +89,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.6.4.zip  (name: "Trepang2 Co-op v0.6.4 (beta)")
+- Main file: dist/Trepang2-Coop-v0.6.5.zip  (name: "Trepang2 Co-op v0.6.5 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

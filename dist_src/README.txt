@@ -41,7 +41,7 @@ If everyone is down, the group goes back to the last checkpoint. Cutscenes are n
 SETTINGS
 --------
 Trepang2\CPPFPS\Binaries\Win64\ue4ss\Mods\T2Coop\config.txt
-  model=106 (partners look like Subject 106) or soldier
+  look=player (everyone looks as they dressed in the safehouse) or 106 (Light 106 suit for all)
 
 UNINSTALL
 ---------

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.4.2"
+local VERSION = "0.4.3"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1246,6 +1246,71 @@ handlers.server["EX"] = function(pc, p)
         end
     end
     S.stats.explosions = (S.stats.explosions or 0) + 1
+end
+
+---------------------------------------------------------------------------
+-- Partner melee: kick (Melee = right mouse by default) and sword swings (fire with a sword).
+-- Like shots, the host re-traces the hit from the partner's camera (short range) and applies it.
+---------------------------------------------------------------------------
+local melee = { kick = false, fire = false }
+local MELEE_KEY = { KeyName = nil }
+local FIRE_KEY = { KeyName = nil }
+S.every(0, function()
+    if not S.joined then return end
+    local pawn = S.client.pawn
+    local pc = localPC()
+    if not valid(pawn) or not valid(pc) then return end
+    MELEE_KEY.KeyName = MELEE_KEY.KeyName or FName("RightMouseButton", EFindName.FNAME_Add)
+    FIRE_KEY.KeyName = FIRE_KEY.KeyName or FName("LeftMouseButton", EFindName.FNAME_Add)
+    local kick = pc:IsInputKeyDown(MELEE_KEY)
+    local fire = pc:IsInputKeyDown(FIRE_KEY)
+    local function send(dmg, head)
+        local cam = pc.PlayerCameraManager:GetCameraLocation()
+        local rot = pc.PlayerCameraManager:GetCameraRotation()
+        S.toServer("MK", fmtVec(cam), string.format("%.2f|%.2f|%.1f|%.2f", rot.Yaw, rot.Pitch, dmg, head))
+    end
+    if kick and not melee.kick then
+        local dmg, head = 50, 2
+        pcall(function() dmg = pawn.KickMeleeDamage; head = pawn.KickMeleeHeadshotDamageMultiplier end)
+        send(dmg, head)
+    end
+    if fire and not melee.fire then
+        local w = pawn.CurrentWeapon
+        if valid(w) and w:GetClass():GetFName():ToString():find("Sword") then
+            local dmg = 100
+            pcall(function() local d = w:GetDamage(); if type(d) == "number" and d > 0 then dmg = d end end)
+            send(dmg, 2)
+        end
+    end
+    melee.kick, melee.fire = kick, fire
+end)
+
+handlers.server["MK"] = function(pc, p)
+    local cam, yaw, pitch = vec(p, 1), tonumber(p[4]), tonumber(p[5])
+    local dmg, headMul = tonumber(p[6]) or 50, tonumber(p[7]) or 2
+    if not yaw then return end
+    local KML = StaticFindObject("/Script/Engine.Default__KismetMathLibrary")
+    local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    DamageTypeCls = DamageTypeCls or classOf("/Script/Engine.DamageType")
+    local dir = KML:GetForwardVector({ Pitch = pitch, Yaw = yaw, Roll = 0 })
+    local puppet = pc.Pawn
+    local hit = {}
+    local ok, blocked = pcall(function()
+        return KSL:LineTraceSingle(world(), cam, { X = cam.X + dir.X * 250, Y = cam.Y + dir.Y * 250, Z = cam.Z + dir.Z * 250 },
+            0, false, valid(puppet) and { puppet } or {}, 0, hit, true, { R = 1, G = 0, B = 0, A = 1 }, { R = 0, G = 1, B = 0, A = 1 }, 0)
+    end)
+    if not (ok and blocked) then return end
+    local actor
+    pcall(function() local a = hit.Actor; actor = (type(a) == "userdata" and a.Get) and a:Get() or a end)
+    if not valid(actor) or not actor:IsA(classOf("/Script/CPPFPS.BaseCharacter")) or actor:IsA(classOf("/Script/CPPFPS.BasePlayer")) or actor.bIsDead then return end
+    local al = actor:K2_GetActorLocation()
+    local headshot = false
+    pcall(function() headshot = hit.ImpactPoint.Z > al.Z + 55 end)
+    if headshot then dmg = dmg * headMul end
+    GS:ApplyPointDamage(actor, dmg, dir, hit, pc, valid(puppet) and puppet or nil, DamageTypeCls)
+    S.stats.melee = (S.stats.melee or 0) + 1
+    if actor.bIsDead then S.creditPartnerKill(actor, dmg) end
 end
 
 -- Client -> host: our pose 20 times a second.

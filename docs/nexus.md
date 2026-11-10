@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde Mode) - Beta
 
 ## Version
-0.6.2
+0.6.3
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -82,5 +82,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.6.2.zip  (name: "Trepang2 Co-op v0.6.2 (beta)")
+- Main file: dist/Trepang2-Coop-v0.6.3.zip  (name: "Trepang2 Co-op v0.6.3 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

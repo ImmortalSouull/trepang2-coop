@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.6.2"
+local VERSION = "0.6.3"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -779,20 +779,27 @@ S.every(30, function()
     shot.weap, shot.ammo = name, ammo
 end)
 
-handlers.server["F"] = function(pc, p)
-    local pawn = pc.Pawn
+-- A shot by another player, shown here: gun animation, 3rd-person sound and muzzle flash (that
+-- copy of the gun never really fires on this machine).
+function S.shotFx(pawn, n)
     if not valid(pawn) then return end
     local w = pawn.CurrentWeapon
     if not valid(w) then return end
-    for _ = 1, math.min(tonumber(p[1]) or 1, 3) do
+    for _ = 1, math.min(n or 1, 3) do
         pcall(function() w:FireAnimation(false) end)
     end
-    -- sound + muzzle flash: the puppet's gun never really fires, so play its 3rd-person effects here
     GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
-    local loc = pawn:K2_GetActorLocation()
     local rot = pawn:K2_GetActorRotation()
     local yaw = math.rad(rot.Yaw)
-    local muzzle = { X = loc.X + math.cos(yaw) * 70, Y = loc.Y + math.sin(yaw) * 70, Z = loc.Z + 50 }
+    local muzzle
+    pcall(function()   -- the gun sits in the body's hand: flash a bit in front of it
+        local g = w.Mesh3P:K2_GetComponentLocation()
+        muzzle = { X = g.X + math.cos(yaw) * 35, Y = g.Y + math.sin(yaw) * 35, Z = g.Z + 5 }
+    end)
+    if not muzzle then
+        local loc = pawn:K2_GetActorLocation()
+        muzzle = { X = loc.X + math.cos(yaw) * 70, Y = loc.Y + math.sin(yaw) * 70, Z = loc.Z + 50 }
+    end
     pcall(function()
         local snd = w.FireSound3P
         if not valid(snd) then snd = w.FireSound1P end
@@ -803,6 +810,53 @@ handlers.server["F"] = function(pc, p)
         if valid(fx) then GS:SpawnEmitterAtLocation(world(), fx, muzzle, rot, { X = 1, Y = 1, Z = 1 }, true, 0, true) end
     end)
     S.stats.shotFx = (S.stats.shotFx or 0) + 1
+end
+
+local function pidOf(pawn)
+    local ok, id = pcall(function() return pawn.PlayerState.PlayerId end)
+    if ok then return id end
+end
+S.pidOf = pidOf
+
+handlers.server["F"] = function(pc, p)
+    local n = tonumber(p[1]) or 1
+    S.shotFx(pc.Pawn, n)
+    -- the other clients hear and see it too
+    local pid = pidOf(pc.Pawn)
+    if pid then
+        for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+            if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+                S.toClient(other, "HF", pid, n)
+            end
+        end
+    end
+end
+
+-- Host's own shots -> clients (host's pawn on a client is a network copy: its gun never fires there).
+local hostShot = { weap = nil, ammo = nil }
+S.every(30, function()
+    if not S.hosting or not netDriver() then return end
+    local pc = localPC()
+    local pawn = valid(pc) and pc.Pawn or nil
+    if not valid(pawn) then return end
+    local w = pawn.CurrentWeapon
+    if not valid(w) then hostShot.weap, hostShot.ammo = nil, nil return end
+    local name, ammo = w:GetFullName(), w.CurrentAmmoInClip
+    if hostShot.weap == name and hostShot.ammo and ammo < hostShot.ammo then
+        S.toClients("HF", pidOf(pawn) or -1, hostShot.ammo - ammo)
+    end
+    hostShot.weap, hostShot.ammo = name, ammo
+end)
+
+-- the pawn of player <pid> on this machine (not our own)
+function S.bodyOf(pid)
+    for _, e in pairs(S.bodies or {}) do
+        if valid(e.pawn) and pidOf(e.pawn) == pid then return e.pawn end
+    end
+end
+handlers.client["HF"] = function(_, p)
+    local pawn = S.bodyOf(tonumber(p[1]))
+    if pawn then S.shotFx(pawn, tonumber(p[2]) or 1) end
 end
 
 ---------------------------------------------------------------------------
@@ -1266,9 +1320,11 @@ end)
 -- The widget writes "NONE" again every frame, so the text can't be replaced: the box is made
 -- see-through while it says NONE (only players get that); the partner's marker shows the name.
 S.partnerName = nil
-S.every(100, function()
+local hudList, hudListAt = {}, 0
+S.every(0, function()
     if not (S.hosting or S.joined) then return end
-    for _, hud in ipairs(FindAllOf("PlayerHUD2_C") or {}) do
+    if os.clock() - hudListAt > 1 then hudList, hudListAt = FindAllOf("PlayerHUD2_C") or {}, os.clock() end
+    for _, hud in ipairs(hudList) do
         if valid(hud) then
             local ok, t = pcall(function() return hud.FriendlyCharacterName:GetText():ToString() end)
             if ok then
@@ -1688,7 +1744,12 @@ S.every(250, function()
         seen[key] = true
         S.bodies[key] = S.bodies[key] or { pawn = p, vx = 0, vy = 0 }
     end
-    for k in pairs(S.bodies) do if not seen[k] then S.bodies[k] = nil end end
+    for k, e in pairs(S.bodies) do
+        if not seen[k] then
+            if e.dualGun then pcall(function() e.dualGun:K2_DestroyActor() end) end
+            S.bodies[k] = nil
+        end
+    end
     -- client: the host's pawn (placed in the level) also made itself a local gun here when the map
     -- loaded; the real one comes from the host. Hide those local extras (a second gun in the hand).
     -- Same for the guns of our own hidden puppet (they floated where the puppet stands).
@@ -1740,9 +1801,132 @@ local function feedBody(e)
     ai.LastMoveSpeed = speed
     if speed > 0 then ai.LastMoveDirection = dir end
 end
+-- Full animation state. Every player's own legs-only body (MeshLegs) runs the real third-person
+-- anim logic for that player on their machine: crouch, slide, sprint, jump, kick... Each machine
+-- sends that state (15 per second); the host passes everyone's on to the clients; every machine
+-- writes it into that player's full body. Motion-based speed above is only the fallback.
+local AF = { Moving = 1, Crouching = 2, IsSliding = 4, Jumping = 8, IsOnGround = 16, IsKicking = 32,
+             IsWeaponLowered = 64, bIsMeleeMode = 128 }
+local SPRINT_BIT = 256
+local DUAL_BIT = 512
+local DROPKICK_BIT = 1024
+local function readAnimState(p)
+    local ai = p.MeshLegs.AnimScriptInstance
+    local flags = 0
+    for k, bit in pairs(AF) do if ai[k] then flags = flags | bit end end
+    local ok, sprint = pcall(function() return p:GetIsSprinting() end)
+    if ok and sprint then flags = flags | SPRINT_BIT end
+    local okd, dual = pcall(function() return p.CurrentWeapon:GetIsDualWielding() end)
+    if okd and dual then flags = flags | DUAL_BIT end
+    if p.IsDropkicking then flags = flags | DROPKICK_BIT end
+    local pitch = 0
+    pcall(function()
+        pitch = p.Controller:GetControlRotation().Pitch
+        if pitch > 180 then pitch = pitch - 360 end
+    end)
+    return string.format("%.0f|%.0f|%d|%d|%d|%.2f|%.0f", ai.Speed, ai.Direction, flags, ai.Stance, ai.LeanStatus, ai.AirDuration, pitch)
+end
+local function parseAnimState(p, i)
+    return { speed = tonumber(p[i]) or 0, dir = tonumber(p[i + 1]) or 0, flags = tonumber(p[i + 2]) or 16,
+             stance = tonumber(p[i + 3]) or 0, lean = tonumber(p[i + 4]) or 0, air = tonumber(p[i + 5]) or 0,
+             pitch = tonumber(p[i + 6]) or 0,
+             raw = table.concat({ p[i], p[i + 1], p[i + 2], p[i + 3], p[i + 4], p[i + 5], p[i + 6] or "0" }, "|"), t = os.clock() }
+end
+local function applyAnimState(ai, st)
+    for k, bit in pairs(AF) do ai[k] = (st.flags & bit) ~= 0 end
+    ai.Speed = st.speed
+    ai.PlanarVelocity = st.speed
+    ai.Direction = st.dir
+    ai.Stance = st.stance
+    ai.LeanStatus = st.lean
+    ai.AirDuration = st.air
+    -- where they look: the body's aim pose follows the player's view pitch
+    pcall(function() ai.AimPitch = st.pitch; ai.AimPitchTarget = st.pitch end)
+    pcall(function() ai.IsDropkicking = (st.flags & DROPKICK_BIT) ~= 0 end)
+    ai.LastMoveSpeed = st.speed
+    if st.speed > 0 then ai.LastMoveDirection = st.dir end
+    -- the native part of the anim instance keeps its own copy of these
+    pcall(function()
+        ai.Char_IsMoving = (st.flags & AF.Moving) ~= 0
+        ai.Char_IsCrouching = (st.flags & AF.Crouching) ~= 0
+        ai.Char_IsSliding = (st.flags & AF.IsSliding) ~= 0
+        ai.Char_IsGrounded = (st.flags & AF.IsOnGround) ~= 0
+        ai.Char_IsSprinting = (st.flags & SPRINT_BIT) ~= 0
+    end)
+end
+S.animState = {}   -- player id -> state
+
+S.every(66, function()
+    if not netDriver() then return end
+    if S.joined then
+        local p = S.client and S.client.pawn
+        if valid(p) then pcall(function() S.toServer("AS", readAnimState(p)) end) end
+    elseif S.hosting then
+        local pc = localPC()
+        if not valid(pc) or not valid(pc.Pawn) then return end
+        local list = FindAllOf("PlayerController") or {}
+        if #list < 2 then return end
+        pcall(function() S.toClients("AS", pidOf(pc.Pawn) or -1, readAnimState(pc.Pawn)) end)
+        for pid, st in pairs(S.animState) do
+            if os.clock() - st.t < 1 then S.toClients("AS", pid, st.raw) end
+        end
+    end
+end)
+handlers.server["AS"] = function(pc, p)
+    local pid = pidOf(pc.Pawn)
+    if pid then S.animState[pid] = parseAnimState(p, 1) end
+end
+handlers.client["AS"] = function(_, p)
+    local pid = tonumber(p[1])
+    if pid then S.animState[pid] = parseAnimState(p, 2) end
+end
+
+-- Dual wielding: the third-person body holds one gun; for a partner with two, a look-only copy of
+-- the gun (no collision, not replicated) goes into the left hand.
+local function updateDualGun(e, dual)
+    local w = e.pawn.CurrentWeapon
+    local cls = valid(w) and w:GetClass() or nil
+    if e.dualGun and (not dual or not valid(e.dualGun) or not same(e.dualGun:GetClass(), cls)) then
+        pcall(function() e.dualGun:K2_DestroyActor() end)
+        e.dualGun = nil
+    end
+    if not dual or e.dualGun or not cls then return end
+    local g = world():SpawnActor(cls, e.pawn:K2_GetActorLocation(), { Pitch = 0, Yaw = 0, Roll = 0 })
+    if not valid(g) then return end
+    pcall(function() g:SetReplicates(false) end)
+    pcall(function() g:SetActorEnableCollision(false) end)
+    for _, k in ipairs({ "Mesh1P", "Mesh1P2" }) do
+        pcall(function() local c = g[k]; if valid(c) then c:SetVisibility(false, false) end end)
+    end
+    pcall(function()
+        g.Mesh3P:K2_AttachToComponent(e.pawn.Mesh, FName("hand_l_align", EFindName.FNAME_Add), 0, 0, 0, false)
+        g.Mesh3P:SetVisibility(true, false)
+    end)
+    e.dualGun = g
+end
+S.every(250, function()
+    for _, e in pairs(S.bodies) do
+        if valid(e.pawn) then
+            local st = S.animState[pidOf(e.pawn) or -2]
+            local dual = st and os.clock() - st.t < 1 and (st.flags & DUAL_BIT) ~= 0
+            pcall(updateDualGun, e, dual)
+        elseif e.dualGun then
+            pcall(function() e.dualGun:K2_DestroyActor() end)
+            e.dualGun = nil
+        end
+    end
+end)
+
 S.every(0, function()
     for _, e in pairs(S.bodies) do
-        if valid(e.pawn) then pcall(feedBody, e) end
+        if valid(e.pawn) then
+            local st = S.animState[pidOf(e.pawn) or -2]
+            if st and os.clock() - st.t < 0.6 then
+                pcall(function() applyAnimState(e.pawn.Mesh.AnimScriptInstance, st) end)
+            else
+                pcall(feedBody, e)
+            end
+        end
     end
 end)
 

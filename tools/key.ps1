@@ -1,10 +1,11 @@
 # Send input to a game window.
 #   key.ps1 -ProcId <pid> -Vk 0x57 -HoldMs 1500      hold a key
+#   key.ps1 -ProcId <pid> -Vks 0x57,0xA0 -HoldMs 1500  hold several keys together (W + LShift)
 #   key.ps1 -ProcId <pid> -Click -HoldMs 300           left mouse button (fire) at window centre
 # -Focus brings the window to the foreground first (Unreal ignores input while unfocused).
 #   key.ps1 -ProcId <pid> -Click -X 200 -Y 150          click at a point of the window's client area
 #     (moves the real cursor there: Slate hover uses the real cursor position)
-param([int]$ProcId, [int]$Vk = 0, [switch]$Click, [int]$HoldMs = 80, [switch]$Focus, [int]$X = 640, [int]$Y = 360)
+param([int]$ProcId, [int]$Vk = 0, [int[]]$Vks = @(), [int]$GapMs = 30, [switch]$Click, [switch]$RClick, [int]$HoldMs = 80, [switch]$Focus, [int]$X = 640, [int]$Y = 360)
 if (-not ("PMK" -as [type])) {
 Add-Type @"
 using System; using System.Runtime.InteropServices;
@@ -43,6 +44,17 @@ if ($Vk) {
   [PMK]::PostMessage($h, 0x0100, [IntPtr]$Vk, [IntPtr](1 -bor ($sc -shl 16))) | Out-Null
   Start-Sleep -Milliseconds $HoldMs
   [PMK]::PostMessage($h, 0x0101, [IntPtr]$Vk, [IntPtr](1 -bor ($sc -shl 16) -bor (3 -shl 30))) | Out-Null
+}
+if ($Vks.Count) {
+  foreach ($k in $Vks) { $sc = [PMK]::MapVirtualKey($k, 0); [PMK]::PostMessage($h, 0x0100, [IntPtr]$k, [IntPtr](1 -bor ($sc -shl 16))) | Out-Null; Start-Sleep -Milliseconds $GapMs }
+  Start-Sleep -Milliseconds $HoldMs
+  foreach ($k in $Vks) { $sc = [PMK]::MapVirtualKey($k, 0); [PMK]::PostMessage($h, 0x0101, [IntPtr]$k, [IntPtr](1 -bor ($sc -shl 16) -bor (3 -shl 30))) | Out-Null }
+}
+if ($RClick) {
+  $lp = [IntPtr](($Y -shl 16) -bor $X)
+  [PMK]::PostMessage($h, 0x0204, [IntPtr]2, $lp) | Out-Null
+  Start-Sleep -Milliseconds $HoldMs
+  [PMK]::PostMessage($h, 0x0205, [IntPtr]0, $lp) | Out-Null
 }
 if ($Click) {
   $lp = [IntPtr](($Y -shl 16) -bor $X)

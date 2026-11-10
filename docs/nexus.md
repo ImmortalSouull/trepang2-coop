@@ -10,70 +10,81 @@ Trepang2 Co-op (Horde + Campaign) - Beta
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
 
 ## Short summary (Nexus "Brief overview", max ~350 characters)
-Play Trepang2 together: co-op Horde (Survival) and, in early form, the story campaign. Host from the F4
-menu, friends join by IP or Steam invite. Everyone sees your safehouse outfit and colours, full animations; shared
-enemies, money, down & revive, checkpoints. Beta - the whole campaign in co-op is the goal for v1.0.
+Play Trepang2 together: co-op Horde and the story campaign. Friends follow the host through missions, checkpoints and cutscenes (which wait for everyone). Your safehouse look is shared, partners are fully animated. Join by IP or Steam invite. Beta - the whole campaign is the goal for v1.0.
 
 ## Description (paste into the Nexus description editor, BBCode)
 
 [size=5][b]Trepang2 Co-op[/b][/size]
-[i]Unofficial mod. Beta: Horde mode works, the story campaign works in early form; the whole campaign in co-op is the goal for v1.0.[/i]
+[i]Unofficial mod. Beta: Horde co-op is complete, the story campaign is playable together and getting more complete with every version. Goal for v1.0: the whole campaign in co-op.[/i]
 
-Trepang2 is a single-player game. This mod turns on Unreal Engine's built-in networking and adds
-everything the game is missing for two (or more) players to fight the [b]Horde / Survival[/b] waves and play the
-[b]story campaign[/b] together.
+Trepang2 is a single-player game. This mod switches on Unreal Engine's own networking and adds everything the game is missing for two (or more) players: [b]Horde / Survival[/b] together and the [b]story campaign[/b] together.
 
-[size=4][b]Features[/b][/size]
+[size=4][b]Campaign co-op[/b][/size]
 [list]
-[*]In-game co-op menu (F4): host any Horde arena (also custom maps - load the map, press HOST), type the friend's address and join, leave, player list
-[*][b]Campaign (early)[/b]: in the safehouse or a mission the host presses F4 - HOST, friends join and follow the host through
-mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host; cutscenes wait until all players gather where they start ("waiting for players k/n" on screen, a marker on the spot), then play for everyone at once (partners are not written into them), radio and dialogue lines with subtitles are heard by all, doors locked/unlocked by the story match for everyone
-[*][b]Your look is shared[/b]: each player appears exactly as they dressed in the safehouse (outfit - 106, Patriarch, 107... - and jacket, gloves, pants, shoes colours and camo); partners are fully animated: walk, sprint, crouch, slide, jump,
-aiming up/down, weapon grip, dual wielding; their shots are seen and heard
-[*]Player names (Steam) over partner markers, "joined" / "left" notices
-[*]Every player plays their own full character: first-person guns, HUD, slow-mo, abilities
-[*]Enemies, waves and money run on the host; shots, headshots, damage and deaths are synced
-[*]Enemies attack every player
-[*]Partner bullets, shotgun pellets, headshots, grenades, kicks (jump kick, dropkick), melee strikes and sword hurt enemies on the host
-[*]Partner kills earn Horde money; guns dropped by enemies or bought by the host can be picked up by anyone
-[*]Horde HUD (wave, enemies left, money, timer) for everybody
-[*][b]Down instead of death[/b]: drop below 30% HP and you go down - a partner standing next to you revives you in 3 s.
-If everyone is down, the arena restarts and everyone reconnects automatically
-[*]Partner markers with distance, on-screen co-op notices
-[*]Tested with 3 players
+[*]Play the campaign as usual. In the safehouse or in a mission the host opens the co-op menu ([b]F4[/b]) and presses [b]HOST[/b] - the level reloads from the last checkpoint with the server on - and friends join.
+[*][b]The host leads the group[/b]: picking a mission at the safehouse map, the helicopter ride, the next level, loading a checkpoint, restarting - wherever the host goes, friends follow automatically.
+[*][b]Cutscenes for everyone[/b]: a cutscene waits until every player has come to where it starts ("WAITING FOR PLAYERS 1/2" at the top of the screen and a "GATHER HERE" marker), then plays for all players at the same moment. Partners are not written into the scene; afterwards everyone continues together.
+[*][b]Radio and dialogue[/b] lines with the speaker's portrait and subtitles are heard by all.
+[*][b]Story events are shared[/b]: objectives, doors, scripted triggers - a friend walking into a trigger sets it off for everyone. Doors the story locks or unlocks match on every machine.
+[*]Enemy squads come from the host and are the same for everybody.
+[*]Checkpoints are saved by the host only - friends' own campaign saves are left alone.
+[*][b]Down & revive[/b]: drop below 30% HP and you go down; a partner standing next to you revives you. If everyone is down, the group goes back to the last checkpoint.
+[/list]
+
+[size=4][b]Horde co-op[/b][/size]
+[list]
+[*]Host any Horde arena from the F4 menu (also custom community Horde maps: load the map, press HOST).
+[*]Enemies, waves and money run on the host; the Horde HUD (wave, enemies left, money, timer) for everyone.
+[*]Partner bullets, shotgun pellets, headshots, grenades, kicks, dropkicks, melee strikes and sword hurt enemies; partner kills earn Horde money.
+[*]Guns dropped by enemies or bought by the host can be picked up by anyone.
+[*]Down & revive; if everyone is down the arena restarts and everyone reconnects automatically.
+[/list]
+
+[size=4][b]Players[/b][/size]
+[list]
+[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player.
+[*][b]Fully animated partners[/b]: walking, sprinting, crouching, sliding, jumping, dropkick, aiming up and down, the right grip for every weapon, dual wielding.
+[*]Partners' and the host's shots are seen and heard by everyone (gun animation, sound, muzzle flash).
+[*]Steam names over partner markers (with distance, visible through walls), "joined" / "left" notices.
+[*]Tested with 3 players; works with more.
+[/list]
+
+[size=4][b]Connecting[/b][/size]
+[list]
+[*][b]IP mode[/b] (default): the host opens UDP port 7777 on the router, or both players use a virtual LAN (Porthole, Radmin VPN, ZeroTier). The friend types the host's IP in the F4 menu and clicks JOIN.
+[*][b]Steam mode[/b] (experimental, no port forwarding): both switch it in the F4 menu and restart the game. The host presses [b]INVITE (STEAM)[/b] and picks the friend in the Steam overlay; the friend accepts and joins automatically (or uses "Join game" in the Steam friends list).
 [/list]
 
 [size=4][b]Installation (every player)[/b][/size]
 [list=1]
 [*]Close the game.
-[*]Unpack the archive anywhere and run [b]install.bat[/b] - it finds Trepang2 through Steam and installs
-the UE4SS mod loader (included) and the mod.
-[*]Start the game once. If the mod shows "restart the game once" - restart it.
-[*]You never copy files into the game folder yourself - install.bat does it. README.txt in the zip has the English guide.
+[*]Unpack the archive anywhere (Desktop is fine) and run [b]install.bat[/b] - it finds Trepang2 through Steam and installs the UE4SS mod loader (included) and the mod. You don't copy anything into the game folder yourself.
+[*]Start the game once. If the mod says "restart the game once" - restart it.
+[*]Press [b]F4[/b] in the game. README.txt in the archive has the full guide.
 [/list]
 
-[size=4][b]Playing over the internet[/b][/size]
-The host needs [b]UDP port 7777[/b] open on the router, or both players use a virtual LAN such as
-Porthole, Radmin VPN or ZeroTier. The friend types the host's IP in the F4 menu and clicks Join.
-[b]Steam mode (experimental)[/b]: no port forwarding - both switch it in the F4 menu and restart the game. The host presses [b]Invite (Steam)[/b] in the F4 menu and picks the friend in the Steam overlay; the friend accepts and joins automatically (or uses "Join game" in the Steam friends list, or types the host's SteamID64).
+[size=4][b]Controls[/b][/size]
+[list]
+[*][b]F4[/b] - co-op menu (host, join, leave, arena, players, network mode, Steam invite)
+[*][b]F5[/b] host, [b]F6[/b] join, [b]F7[/b] leave, [b]F8[/b] next Horde arena
+[/list]
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
-[*]Campaign: hostages, terminals/hacking and objective markers are not synced yet; after a level change friends reconnect in ~30-40 s
-[*]Partner reload and ground melee strike are not shown on their body
-[*]Fire / incendiary damage from the partner is not synced yet
-[*]Ammo / health pickups are separate for each player
-[*]Steam mode is not yet tested between two different Steam accounts
-[*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the
-[OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
+[*]Campaign: hostages, terminals / hacking, objective markers set by the story and elevators are not synced yet.
+[*]After a level change friends reconnect in about 30-40 seconds while the level loads.
+[*]Partners' reload and ground melee strike are not shown on their body; dual wielding shows both guns but with a two-handed pose.
+[*]Fire / incendiary damage from the partner is not counted yet.
+[*]Ammo and health pickups are separate for each player.
+[*]Steam mode is not yet tested between two different Steam accounts; players on a non-Steam copy can only use IP mode.
+[*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
 [/list]
 
 [size=4][b]Roadmap[/b][/size]
 [list]
-[*][b]v0.6[/b] (done) - campaign basics: missions together, level transitions, safehouse lobby, checkpoints; 106 models and animations
-[*][b]v0.7[/b] - campaign scripts: doors, elevators, objectives, cutscenes and dialogue for everyone, terminals and hostages
+[*][b]v0.7.x[/b] - hostages, terminals and hacking, objective markers, elevators
 [*][b]v0.8[/b] - bosses, special levels, side missions, difficulty for more players
-[*][b]v0.9[/b] - progression for every player, spectating, rejoining, full-campaign testing
+[*][b]v0.9[/b] - progression for every player, spectating while down, rejoining, a full campaign run together
 [*][b]v1.0[/b] - the whole Trepang2 campaign + Horde playable in co-op
 [/list]
 
@@ -83,11 +94,9 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 [size=4][b]Credits[/b][/size]
 [list]
 [*]UE4SS (RE-UE4SS team, MIT license) - the mod loader bundled with this mod
-[*]Source code and release notes: github.com/ImmortalSouull/trepang2-coop
+[*]Source code, all versions and release notes: github.com/ImmortalSouull/trepang2-coop
 [/list]
-[i]This mod was made with the help of AI (Claude). It is not affiliated with Trepang Studios or Team17.
-No game files are included.[/i]
+[i]This mod was made with the help of AI (Claude). It is not affiliated with Trepang Studios or Team17. No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.7.1.zip  (name: "Trepang2 Co-op v0.7.1 (beta)")
-- Requirements to declare on Nexus: none extra (UE4SS is bundled)
+See nexus_upload/ (one folder per version: zip + changelog.txt) and docs/nexus_upload.md.

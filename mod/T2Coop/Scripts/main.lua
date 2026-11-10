@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.4.4"
+local VERSION = "0.4.5"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1276,6 +1276,15 @@ S.every(0, function()
         local dmg, head, range = 50, 2, 250
         if falling then
             pcall(function() dmg = pawn.KickMeleeDamage; head = pawn.KickMeleeHeadshotDamageMultiplier; range = pawn.MeleeKickRange end)
+            -- sprint + jump + melee is a two-leg dropkick, handled below; give it a moment to start
+            local wait = 150
+            S.every(30, function(dt)
+                wait = wait - dt
+                if valid(pawn) and pawn.IsDropkicking then return true end
+                if wait <= 0 then send(dmg, head, range); return true end
+            end)
+            melee.kick, melee.fire = kick, fire
+            return
         else
             local w = pawn.CurrentWeapon
             if valid(w) then
@@ -1322,6 +1331,44 @@ handlers.server["MK"] = function(pc, p)
     GS:ApplyPointDamage(actor, dmg, dir, hit, pc, valid(puppet) and puppet or nil, DamageTypeCls)
     S.stats.melee = (S.stats.melee or 0) + 1
     if actor.bIsDead then S.creditPartnerKill(actor, dmg) end
+end
+
+-- Two-leg dropkick (sprint + jump + melee): it hurts whoever the flying player crashes into.
+-- While it lasts, every enemy copy that comes within reach is reported once; the host applies it.
+local dk = { active = false, hit = {} }
+S.every(0, function()
+    if not S.joined then return end
+    local pawn = S.client.pawn
+    if not valid(pawn) then return end
+    local on = false
+    pcall(function() on = pawn.IsDropkicking end)
+    if on and not dk.active then dk.hit = {} end
+    dk.active = on
+    if not on then return end
+    local me = pawn:K2_GetActorLocation()
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+        if not c:IsA(playerCls) and not c.bIsDead then
+            local key = c:GetFullName()
+            if not dk.hit[key] and dist2(c:K2_GetActorLocation(), me) <= 160 * 160 then
+                dk.hit[key] = true
+                local dmg = 120
+                pcall(function() dmg = pawn.KickMeleeDamage * 1.5 end)
+                S.toServer("DK", fmtVec(c:K2_GetActorLocation()), string.format("%.1f", dmg))
+            end
+        end
+    end
+end)
+
+handlers.server["DK"] = function(pc, p)
+    local npc = nearestNPC(vec(p, 1), 300)
+    if not valid(npc) then return end
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    DamageTypeCls = DamageTypeCls or classOf("/Script/Engine.DamageType")
+    local dmg = tonumber(p[4]) or 120
+    GS:ApplyDamage(npc, dmg, pc, valid(pc.Pawn) and pc.Pawn or nil, DamageTypeCls)
+    S.stats.dropkicks = (S.stats.dropkicks or 0) + 1
+    if npc.bIsDead then S.creditPartnerKill(npc, dmg) end
 end
 
 -- Client -> host: our pose 20 times a second.

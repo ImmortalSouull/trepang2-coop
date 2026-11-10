@@ -1,30 +1,35 @@
 # Nexus Mods page — Trepang2 Co-op
 
 ## Name
-Trepang2 Co-op (Horde Mode) - Beta
+Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.6.3
+0.6.4
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
 
 ## Short summary (Nexus "Brief overview", max ~350 characters)
-Play Trepang2 together. Adds co-op to Horde (Survival) mode: host an arena, a friend joins by IP, fight
-the waves side by side with shared money, partner markers and down & revive. Early beta - the full story
-campaign in co-op is the goal for v1.0.
+Play Trepang2 together: co-op Horde (Survival) and, in early form, the story campaign. Host from the F4
+menu, friends join by IP or Steam invite. Partners appear as Subject 106 with full animations; shared
+enemies, money, down & revive, checkpoints. Beta - the whole campaign in co-op is the goal for v1.0.
 
 ## Description (paste into the Nexus description editor, BBCode)
 
 [size=5][b]Trepang2 Co-op[/b][/size]
-[i]Unofficial mod. Early beta: Horde mode now, the full story campaign in co-op is the goal for v1.0.[/i]
+[i]Unofficial mod. Beta: Horde mode works, the story campaign works in early form; the whole campaign in co-op is the goal for v1.0.[/i]
 
 Trepang2 is a single-player game. This mod turns on Unreal Engine's built-in networking and adds
-everything the game is missing for two (or more) players to fight the [b]Horde / Survival[/b] waves together.
+everything the game is missing for two (or more) players to fight the [b]Horde / Survival[/b] waves and play the
+[b]story campaign[/b] together.
 
 [size=4][b]Features[/b][/size]
 [list]
-[*]In-game co-op menu (F4): host any Horde arena, type the friend's address and join, leave, player list
+[*]In-game co-op menu (F4): host any Horde arena (also custom maps - load the map, press HOST), type the friend's address and join, leave, player list
+[*][b]Campaign (early)[/b]: in the safehouse or a mission the host presses F4 - HOST, friends join and follow the host through
+mission starts, level changes, checkpoints and restarts; story triggers (objectives, doors) are shared, enemies come from the host
+[*][b]Partners look like Subject 106[/b] (the game's own model) and are fully animated: walk, sprint, crouch, slide, jump,
+aiming up/down, weapon grip, dual wielding; their shots are seen and heard
 [*]Player names (Steam) over partner markers, "joined" / "left" notices
 [*]Every player plays their own full character: first-person guns, HUD, slow-mo, abilities
 [*]Enemies, waves and money run on the host; shots, headshots, damage and deaths are synced
@@ -44,6 +49,7 @@ If everyone is down, the arena restarts and everyone reconnects automatically
 [*]Unpack the archive anywhere and run [b]install.bat[/b] - it finds Trepang2 through Steam and installs
 the UE4SS mod loader (included) and the mod.
 [*]Start the game once. If the mod shows "restart the game once" - restart it.
+[*]You never copy files into the game folder yourself - install.bat does it. README.txt in the zip has the English guide.
 [/list]
 
 [size=4][b]Playing over the internet[/b][/size]
@@ -53,17 +59,18 @@ Porthole, Radmin VPN or ZeroTier. The friend types the host's IP in the F4 menu 
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
+[*]Campaign: cutscenes and some scripted scenes are not synced yet (planned for v0.7); after a level change friends reconnect in ~30-40 s
+[*]Partner reload and ground melee strike are not shown on their body
 [*]Fire / incendiary damage from the partner is not synced yet
 [*]Ammo / health pickups are separate for each player
 [*]Steam mode is not yet tested between two different Steam accounts
-[*]Campaign co-op is early (v0.6): host presses F4 - HOST in the safehouse or a mission, friends follow the host through levels and checkpoints; cutscenes not synced yet
 [*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the
 [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
 [/list]
 
 [size=4][b]Roadmap[/b][/size]
 [list]
-[*][b]v0.6[/b] - campaign basics: missions together, level transitions, safehouse lobby, checkpoints
+[*][b]v0.6[/b] (done) - campaign basics: missions together, level transitions, safehouse lobby, checkpoints; 106 models and animations
 [*][b]v0.7[/b] - campaign scripts: doors, elevators, objectives, cutscenes and dialogue for everyone, terminals and hostages
 [*][b]v0.8[/b] - bosses, special levels, side missions, difficulty for more players
 [*][b]v0.9[/b] - progression for every player, spectating, rejoining, full-campaign testing
@@ -82,5 +89,5 @@ Delete [i]dwmapi.dll[/i] and the [i]ue4ss[/i] folder from [i]Trepang2\CPPFPS\Bin
 No game files are included.[/i]
 
 ## Files to upload
-- Main file: dist/Trepang2-Coop-v0.6.3.zip  (name: "Trepang2 Co-op v0.6.3 (beta)")
+- Main file: dist/Trepang2-Coop-v0.6.4.zip  (name: "Trepang2 Co-op v0.6.4 (beta)")
 - Requirements to declare on Nexus: none extra (UE4SS is bundled)

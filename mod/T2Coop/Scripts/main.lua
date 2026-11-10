@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.6.3"
+local VERSION = "0.6.4"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -2056,7 +2056,19 @@ end)
 -- (sky, music, tutorials) switched on; when a host trigger fires, clients fire their copy too,
 -- except saves and spawns (the host's enemies reach clients through the engine anyway).
 ---------------------------------------------------------------------------
-function S.isHordeMap(map) return (map or ""):find("Horde") ~= nil end
+-- A Horde map: by name, or (custom community maps) by the horde mode actor being in the level.
+function S.isHordeMap(map)
+    if (map or ""):find("Horde") then return true end
+    local name = currentLevelName()
+    if map and name and (map:match("([^/]+)$") == name) then return valid(FindFirstOf("HordeModeActor_C")) end
+    return false
+end
+-- the Horde level we're standing in (short name), nil elsewhere
+function S.hordeLevelHere()
+    local name = currentLevelName()
+    if not name or name == "" or name:find("MenuMap") then return nil end
+    if name:find("Horde") or valid(FindFirstOf("HordeModeActor_C")) then return name end
+end
 
 local function missionLib()
     local L = StaticFindObject("/Game/Blueprint/Game/BP_MissionLib.Default__BP_MissionLib_C")
@@ -2081,7 +2093,7 @@ end
 -- the campaign level we're in (safehouse or a mission), nil in the menu / horde / offline maps
 function S.campaignLevel()
     local name = currentLevelName()
-    if not name or name == "" or name:find("FrontEnd") or name:find("MenuMap") or S.isHordeMap(name) then return nil end
+    if not name or name == "" or name:find("FrontEnd") or name:find("MenuMap") or S.hordeLevelHere() then return nil end
     return name
 end
 -- host the level we're in: the game reloads it (last checkpoint, or a restart) and our
@@ -2452,6 +2464,7 @@ local function shortName(map) return (map:match("([^/]+)$") or map):gsub("^Horde
 
 local pending = nil
 local function onKey(action) pending = action end
+S.press = onKey   -- dev/tests: same as pressing a menu button ("host", "join", ...)
 pcall(function()
     RegisterKeyBind(Key.F5, function() onKey("host") end)
     RegisterKeyBind(Key.F6, function() onKey("join") end)
@@ -2482,6 +2495,13 @@ S.every(100, function()
     pending = nil
     if action == "host" then
         if S.iniOk == false then S.notify("CO-OP: restart the game once (settings were just installed)") return end
+        -- already on a Horde map (also custom ones that F8 can't list): host that map
+        local arena = S.hordeLevelHere()
+        if arena and not S.hosting then
+            S.notify("CO-OP: hosting " .. arena .. (S.netMode == "steam" and " - F4 to invite Steam friends" or " (UDP 7777)"))
+            S.host(arena)
+            return
+        end
         local here = S.campaignLevel()
         if here then
             S.notify("CO-OP: hosting " .. here .. " - reloading the last checkpoint" ..
@@ -2752,8 +2772,10 @@ local function refreshMenu()
     if S.iniOk == false then status = "RESTART THE GAME to apply network settings" end
     pcall(function() menu.status:SetText(FText(status)) end)
     local here = S.campaignLevel()
+    local arenaHere = not S.hosting and S.hordeLevelHere() or nil
     pcall(function()
-        menu.arena:SetText(FText(here and ("HOST = this level (" .. here .. "), from the last checkpoint")
+        menu.arena:SetText(FText(arenaHere and ("HOST = this arena (" .. arenaHere .. ")")
+            or here and ("HOST = this level (" .. here .. "), from the last checkpoint")
             or ("Arena to host: " .. shortName(cfg.map))))
     end)
     local list = playerList()

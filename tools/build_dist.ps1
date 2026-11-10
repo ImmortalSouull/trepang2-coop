@@ -12,7 +12,7 @@ $stage = Join-Path $env:TEMP "t2coop_build\$name"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force "$stage\files\Mods\T2Coop\Scripts" | Out-Null
 
-Copy-Item "$proj\dist_src\install.bat", "$proj\dist_src\install.ps1", "$proj\dist_src\README.ru.md" $stage
+Copy-Item "$proj\dist_src\install.bat", "$proj\dist_src\install.ps1", "$proj\dist_src\README.ru.md", "$proj\dist_src\README.txt" $stage
 $ue = Get-ChildItem "$proj\third_party" -Filter "UE4SS_*.zip" | Select-Object -First 1
 Expand-Archive $ue.FullName "$stage\files" -Force          # -> files\dwmapi.dll, files\ue4ss\...
 (Get-Content "$stage\files\ue4ss\UE4SS-settings.ini") -replace '^DefaultExecuteInGameThreadMethod\s*=.*', 'DefaultExecuteInGameThreadMethod = ProcessEvent' |

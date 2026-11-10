@@ -21,6 +21,7 @@ Press F4 in the game (main menu or in a level) - the co-op menu opens.
   JOIN        - type the host's address in the box and click Join.
   LEAVE       - leave co-op.
   INVITE      - Steam mode only: invite a Steam friend through the Steam overlay.
+  LOOK        - your look for the others: safehouse outfit, or one of 16 enemy outfits.
 
 Keys: F4 menu, F5 host, F6 join, F7 leave, F8 next arena.
 

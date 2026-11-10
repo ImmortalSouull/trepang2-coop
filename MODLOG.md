@@ -275,6 +275,16 @@
     `JumpToSeconds(0)`, `Play()`. После смены уровня ждём и переподключающихся (число игроков до смены, 2 мин).
     Язык надписи — `KismetInternationalizationLibrary:GetCurrentCulture()`.
 
+45. **Вражеские облики (skin).** На каждой машине для такого игрока спавним настоящего NPC фракции
+    (`BeginDeferredActorSpawnFromClass`, до Finish: `AutoPossessAI=0`, `bReplicates=false`), после: без коллизии,
+    тика, движения, `bIsDead=true`, его оружие (Owner = он) удаляем; `Mesh` NPC прицепляем к `Mesh` игрока
+    (Snap) + `SetMasterPoseComponent(игрок.Mesh)` — снаряжение (жилет, шлем, подсумки) едет вместе; тело
+    игрока `SetHiddenInGame`. Внешность NPC игра выдаёт сама при спавне (MID + аксессуары, как у настоящего).
+    16 классов в `S.SKINS`; `T2C.mySkin`, config `skin=`, F4 «LOOK» по кругу; поле в `CU`.
+    Мол-копы — `NPC_MallCop_*`; «TTMF» в файлах игры не найдено.
+    **Баг 0.6.5–0.7.1:** saveConfig писал `cfg.model` (nil в новом конфиге) → мод падал при загрузке у новых
+    установок. Исправлено (look/skin через tostring).
+
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
 - Хост → клиент через `PlayerController:ClientMessage`.

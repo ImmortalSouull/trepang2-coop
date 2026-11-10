@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.7.1
+0.7.2
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -42,7 +42,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Players[/b][/size]
 [list]
-[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player.
+[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player. Or [b]dress up as an enemy[/b]: F4 menu - LOOK cycles through 16 enemy outfits (Mall Cop, Cultist, Cultist Captain, Horizon Guard and Elite, Black Ops, Bulldozer, Hazmat, Biologist, HECU, Lawyer Thug, Bodyguard, Corsair, Bandit, Outlaw, Rig Worker) - real enemy gear, everyone sees it.
 [*][b]Fully animated partners[/b]: walking, sprinting, crouching, sliding, jumping, dropkick, aiming up and down, the right grip for every weapon, dual wielding.
 [*]Partners' and the host's shots are seen and heard by everyone (gun animation, sound, muzzle flash).
 [*]Steam names over partner markers (with distance, visible through walls), "joined" / "left" notices.

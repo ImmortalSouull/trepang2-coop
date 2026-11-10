@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.1"
+local VERSION = "0.7.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -564,6 +564,7 @@ RegisterLoadMapPreHook(function()
     S.expectPlayers, S.expectUntil = S.lastCount or 1, os.clock() + 120
     S.dlgSeen = {}
     S.doorSeen = {}
+    S.costumes, S.costumeSet = {}, {}
     if S.me then S.me.down, S.me.max = false, nil end
     S.downed = {}
     -- UE4SS crashed inside Lua right after some map loads (host side, ~1 in 4): most likely the Lua
@@ -1809,7 +1810,7 @@ local function myLook(pawn)
         end
     end)
     for i = 1, 4 do parts[i] = parts[i] or "" end
-    return tostring(outfit) .. "|" .. table.concat(parts, "|") .. "|" .. clothesMaterial(pawn)
+    return tostring(outfit) .. "|" .. table.concat(parts, "|") .. "|" .. clothesMaterial(pawn) .. "|" .. (S.mySkin or "")
 end
 S.myLook = myLook
 
@@ -1835,9 +1836,100 @@ local function wearForced106(p)
 end
 
 -- dress body pawn p in the look sent for its player (once per change); then mirror the shadow body
+-- Enemy outfits: a player can look like one of the game's enemy factions (F4 menu, config skin=).
+-- Each machine spawns, for such a player, a real NPC of that faction as a "costume": no AI (not
+-- possessed), no collision, no tick, not replicated, marked dead so nothing counts or targets it.
+-- The game dresses it like any enemy of its kind (body, materials, helmet, armour). Its body is
+-- put on the player's body and copies its pose bone for bone (master pose); the player's own body
+-- is hidden. The costume's own gun is removed (the player's gun stays in the hand).
+S.SKINS = {
+    { id = "mallcop",   name = "Mall Cop",         cls = "/Game/Character/NPC/Human/Type/Blue/NPC_MallCop_Pistol.NPC_MallCop_Pistol_C" },
+    { id = "cultist",   name = "Cultist",          cls = "/Game/Character/NPC/Human/Type/Cultist/NPC_CultistSMG.NPC_CultistSMG_C" },
+    { id = "captain",   name = "Cultist Captain",  cls = "/Game/Character/NPC/Human/Type/Cultist/Captain/NPC_CultistCaptain_NonBoss.NPC_CultistCaptain_NonBoss_C" },
+    { id = "guard",     name = "Horizon Guard",    cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Guard_Rifle.NPC_Guard_Rifle_C" },
+    { id = "elite",     name = "Horizon Elite",    cls = "/Game/Character/NPC/Human/Type/Blue/NPC_GuardElite.NPC_GuardElite_C" },
+    { id = "blackops",  name = "Black Ops",        cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Guard_BlackOps.NPC_Guard_BlackOps_C" },
+    { id = "bulldozer", name = "Bulldozer",        cls = "/Game/Character/NPC/Human/Type/Blue/NPC_Bulldozer_Rifle.NPC_Bulldozer_Rifle_C" },
+    { id = "hazmat",    name = "Hazmat",           cls = "/Game/Character/NPC/Human/Type/Blue/Site83_Mothman/NPC_Site83_Hazmat_SL8.NPC_Site83_Hazmat_SL8_C" },
+    { id = "biologist", name = "Biologist",        cls = "/Game/Character/NPC/Human/Type/Blue/Creepers/NPC_Biologist_SMG.NPC_Biologist_SMG_C" },
+    { id = "hecu",      name = "HECU",             cls = "/Game/Character/NPC/Human/Type/Blue/HECU/NPC_HECU_AR1.NPC_HECU_AR1_C" },
+    { id = "lawyer",    name = "Lawyer Thug",      cls = "/Game/Character/NPC/Human/Type/Blue/LawyerThugs/NPC_LawyerThugRifle.NPC_LawyerThugRifle_C" },
+    { id = "bodyguard", name = "Bodyguard",        cls = "/Game/Character/NPC/Human/Type/Bodyguard/NPC_Bodyguard_Rifle.NPC_Bodyguard_Rifle_C" },
+    { id = "corsair",   name = "Corsair",          cls = "/Game/Character/NPC/Human/Type/Blue/Corsair/NPC_Corsair_AR1.NPC_Corsair_AR1_C" },
+    { id = "bandit",    name = "Bandit",           cls = "/Game/Character/NPC/Human/Type/Blue/BadOil/Bandit/NPC_Bandit_AR1.NPC_Bandit_AR1_C" },
+    { id = "outlaw",    name = "Outlaw",           cls = "/Game/Character/NPC/Human/Type/Blue/BadOil/Outlaw/NPC_Outlaw_AR1.NPC_Outlaw_AR1_C" },
+    { id = "rigworker", name = "Rig Worker",       cls = "/Game/Character/NPC/Human/Type/Blue/HECU/NPC_RigWorker_SMG.NPC_RigWorker_SMG_C" },
+}
+local function skinById(id)
+    for _, k in ipairs(S.SKINS) do if k.id == id then return k end end
+end
+S.skinById = skinById
+S.costumes = {}       -- body full name -> { actor, id }
+S.costumeSet = {}     -- costume actor full name -> true
+
+local function removeCostume(p)
+    local key = p:GetFullName()
+    local c = S.costumes[key]
+    if not c then return end
+    S.costumes[key] = nil
+    if valid(c.actor) then
+        S.costumeSet[c.actor:GetFullName()] = nil
+        pcall(function() c.actor:K2_DestroyActor() end)
+    end
+    pcall(function() p.Mesh:SetHiddenInGame(false, false) end)
+end
+S.removeCostume = removeCostume
+
+local function wearCostume(p, id)
+    local key = p:GetFullName()
+    local c = S.costumes[key]
+    if c and c.id == id and valid(c.actor) then
+        pcall(function() if not p.Mesh.bHiddenInGame then p.Mesh:SetHiddenInGame(true, false) end end)
+        return true
+    end
+    removeCostume(p)
+    local skin = skinById(id)
+    if not skin then return false end
+    local cls = loadObj(skin.cls)
+    if not cls then log("enemy outfit " .. id .. ": class not found") return false end
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local l = p:K2_GetActorLocation()
+    local xf = { Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Translation = { X = l.X, Y = l.Y, Z = l.Z - 5000 }, Scale3D = { X = 1, Y = 1, Z = 1 } }
+    local a = GS:BeginDeferredActorSpawnFromClass(world(), cls, xf, 1, nil)
+    if not valid(a) then return false end
+    pcall(function() a.AutoPossessAI = 0 end)          -- no AI controller
+    pcall(function() a.bReplicates = false end)
+    S.costumeSet[a:GetFullName()] = true
+    GS:FinishSpawningActor(a, xf)
+    pcall(function() a:SetActorEnableCollision(false) end)
+    pcall(function() a:SetActorTickEnabled(false) end)
+    pcall(function() a.bIsDead = true end)
+    pcall(function() a.CharacterMovement:SetComponentTickEnabled(false) end)
+    -- its own guns go
+    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+        local ok, own = pcall(function() return same(w.Owner, a) end)
+        if ok and own then pcall(function() w:K2_DestroyActor() end) end
+    end
+    -- its body onto the player's, following the player's pose
+    pcall(function()
+        a.Mesh:K2_AttachToComponent(p.Mesh, FName("None", EFindName.FNAME_Add), 2, 2, 2, false)
+        a.Mesh:SetMasterPoseComponent(p.Mesh, true)
+    end)
+    pcall(function() p.Mesh:SetHiddenInGame(true, false) end)
+    S.costumes[key] = { actor = a, id = id }
+    log("dressed " .. p:GetFName():ToString() .. " as " .. skin.name)
+    return true
+end
+
 local function wearLook(p)
-    if (S.cfgModel or "player") == "106" then return wearForced106(p) end
     local look = S.looks[S.pidOf(p) or -2]
+    if look and look.skin and look.skin ~= "" and skinById(look.skin) then
+        if wearCostume(p, look.skin) then return end
+    elseif S.costumes[p:GetFullName()] then
+        removeCostume(p)
+        if S.dressed then S.dressed[p:GetFullName()] = nil end
+    end
+    if (S.cfgModel or "player") == "106" then return wearForced106(p) end
     local key = p:GetFullName()
     S.dressed = S.dressed or {}
     S.dressSrc = S.dressSrc or {}
@@ -1863,14 +1955,14 @@ end
 handlers.server["CU"] = function(pc, p)
     local pid = S.pidOf(pc.Pawn)
     if not pid then return end
-    local key = table.concat({ p[1] or "0", p[2] or "", p[3] or "", p[4] or "", p[5] or "", p[6] or "" }, "|")
-    S.looks[pid] = { key = key, outfit = tonumber(p[1]) or 0, classes = { p[2] or "", p[3] or "", p[4] or "", p[5] or "" }, mat = p[6] or "" }
+    local key = table.concat({ p[1] or "0", p[2] or "", p[3] or "", p[4] or "", p[5] or "", p[6] or "", p[7] or "" }, "|")
+    S.looks[pid] = { key = key, outfit = tonumber(p[1]) or 0, classes = { p[2] or "", p[3] or "", p[4] or "", p[5] or "" }, mat = p[6] or "", skin = p[7] or "" }
 end
 handlers.client["CU"] = function(_, p)
     local pid = tonumber(p[1])
     if not pid then return end
-    local key = table.concat({ p[2] or "0", p[3] or "", p[4] or "", p[5] or "", p[6] or "", p[7] or "" }, "|")
-    S.looks[pid] = { key = key, outfit = tonumber(p[2]) or 0, classes = { p[3] or "", p[4] or "", p[5] or "", p[6] or "" }, mat = p[7] or "" }
+    local key = table.concat({ p[2] or "0", p[3] or "", p[4] or "", p[5] or "", p[6] or "", p[7] or "", p[8] or "" }, "|")
+    S.looks[pid] = { key = key, outfit = tonumber(p[2]) or 0, classes = { p[3] or "", p[4] or "", p[5] or "", p[6] or "" }, mat = p[7] or "", skin = p[8] or "" }
 end
 -- every 2 s: our own look (and, on the host, everybody's) - cheap, and covers late joiners
 S.every(2000, function()
@@ -1890,10 +1982,12 @@ local function showAsThirdPerson(p)
     pcall(wearLook, p)
     -- the visible body casts the shadow now; the shadow-only copy would make a second one
     pcall(function() if p.ShadowMesh.bCastHiddenShadow then p.ShadowMesh:SetCastHiddenShadow(false) end end)
-    pcall(function()
-        if p.Mesh.bHiddenInGame then p.Mesh:SetHiddenInGame(false, false) end
-        if not p.Mesh:IsVisible() then p.Mesh:SetVisibility(true, false) end
-    end)
+    if not S.costumes[p:GetFullName()] then
+        pcall(function()
+            if p.Mesh.bHiddenInGame then p.Mesh:SetHiddenInGame(false, false) end
+            if not p.Mesh:IsVisible() then p.Mesh:SetVisibility(true, false) end
+        end)
+    end
     for _, k in ipairs({ "MeshLegs", "Mesh1P", "Mesh1P2" }) do
         pcall(function() local c = p[k]; if valid(c) and c:IsVisible() then c:SetVisibility(false, false) end end)
     end
@@ -1924,6 +2018,12 @@ S.every(250, function()
         local key = p:GetFullName()
         seen[key] = true
         S.bodies[key] = S.bodies[key] or { pawn = p, vx = 0, vy = 0 }
+    end
+    for k, c in pairs(S.costumes) do
+        if not seen[k] then
+            if valid(c.actor) then pcall(function() c.actor:K2_DestroyActor() end) end
+            S.costumes[k] = nil
+        end
     end
     for k, e in pairs(S.bodies) do
         if not seen[k] then
@@ -2396,7 +2496,7 @@ S.every(500, function()
     for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
         -- (not the helicopters' AI "bullseye" targets: their owner keeps using them, removing one
         -- crashed the game)
-        if c.Role == 3 and not c:IsA(playerCls) and not c:GetFName():ToString():find("Bullseye") then
+        if c.Role == 3 and not c:IsA(playerCls) and not c:GetFName():ToString():find("Bullseye") and not S.costumeSet[c:GetFullName()] then
             log("removing local-only " .. c:GetFName():ToString())
             pcall(function() c:K2_DestroyActor() end)
         end
@@ -2937,7 +3037,7 @@ end
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
-local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player" }
+local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player", skin = "" }
 local function loadConfig()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return end
@@ -2960,14 +3060,17 @@ local function saveConfig()
     f:write("name=" .. cfg.name .. "\n")
     f:write("# arena to host (F8 cycles through all arenas in game)\n")
     f:write("map=" .. cfg.map .. "\n")
-    f:write("# how other players look: 106 (Subject 106) or soldier (generic merc)\n")
-    f:write("model=" .. cfg.model .. "\n")
+    f:write("# how other players look: player (what each picked in the safehouse) or 106 (Light 106 suit for all)\n")
+    f:write("look=" .. tostring(cfg.look or "player") .. "\n")
+    f:write("# your enemy outfit (F4 menu - LOOK), empty = your safehouse look\n")
+    f:write("skin=" .. tostring(cfg.skin or "") .. "\n")
     f:close()
 end
 loadConfig()
 saveConfig()
 S.cfg = cfg
 S.cfgModel = cfg.look
+S.mySkin = cfg.skin or ""
 pcall(ensureEngineIni, cfg.net)
 S.bootNet, S.bootIniOk, S.bootDriver = S.netMode, S.iniOk, S.driverClass
 
@@ -3132,6 +3235,15 @@ S.every(100, function()
         S.switchNetMode()
     elseif action == "menu" then
         S.menuToggle()
+    elseif action == "nextlook" then
+        -- cycle: safehouse outfit -> each enemy outfit -> back
+        local list, idx = S.SKINS or {}, 0
+        for i, k in ipairs(list) do if k.id == S.mySkin then idx = i end end
+        idx = idx + 1
+        S.mySkin = (idx <= #list) and list[idx].id or ""
+        cfg.skin = S.mySkin
+        saveConfig()
+        S.notify("CO-OP: your look - " .. ((idx <= #list) and list[idx].name or "safehouse outfit"))
     elseif action == "invite" then
         S.steamInvite()
     elseif action == "nextmap" then
@@ -3306,7 +3418,7 @@ local function buildMenu()
     menu.slots = {}
     local bg = mk(tree, "Border", "Bg")
     bg:SetBrushColor({ R = 0.0, G = 0.0, B = 0.0, A = 0.93 })
-    place(root, bg, -30, -20, MENU_W + 60, 800)
+    place(root, bg, -30, -20, MENU_W + 60, 860)
     label(tree, root, "TREPANG2 CO-OP  v" .. VERSION, 0, 0, "Title")
     menu.status = label(tree, root, "", 0, 40, "Status")
     button(tree, root, "HOST", 0, 120, 370, "host")
@@ -3330,6 +3442,7 @@ local function buildMenu()
         local b, t = button(tree, root, "", (i - 1) * 260, 700, 240, "friend" .. i)
         menu.fslots[i] = { b = b, t = t }
     end
+    menu.lookBtn, menu.lookText = button(tree, root, "LOOK", 0, 760, 760, "nextlook")
     -- the game's default font is big at 1080p-like UI scale: shrink the whole panel
     pcall(function() root:SetRenderTransformPivot({ X = 0, Y = 0 }) end)
     pcall(function() root:SetRenderScale({ X = MENU_SCALE, Y = MENU_SCALE }) end)
@@ -3408,6 +3521,8 @@ local function refreshMenu()
         ftext = #hosts == 0 and "Steam friends hosting: none yet" or "Steam friends hosting - click to join:"
     end
     pcall(function() menu.friends:SetText(FText(ftext)) end)
+    local sk = S.skinById and S.skinById(S.mySkin or "")
+    pcall(function() menu.lookText:SetText(FText("LOOK: " .. (sk and sk.name or "safehouse outfit") .. "   >")) end)
     for i, slot in ipairs(menu.fslots or {}) do
         local h = hosts[i]
         pcall(function()

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.8.1"
+local VERSION = "0.8.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4062,6 +4062,81 @@ S.every(500, function()
         end
     end
 end)
+
+---------------------------------------------------------------------------
+-- Mission loadout and gas mask. The host's pawn gets its mission weapon from its checkpoint save /
+-- the level; a partner's pawn (spawned by the mod) only has the pistol, and the game equips weapons
+-- only through a real hold-F pickup. So on joining a campaign level / side mission the host sends its
+-- weapon class ("LW|class") and the partner finds that weapon at its feet (+ a notice).
+-- Gas mask (KillGhosts...): the host's bIsWearingGasMask is copied to every partner ("GM|1/0") and
+-- to their bodies on the host.
+---------------------------------------------------------------------------
+do
+S.lwSent, S.gmSent = {}, {}
+S.every(500, function()
+    if not S.hosting or not netDriver() then return end
+    local hpc = localPC()
+    local hp = valid(hpc) and hpc.Pawn or nil
+    if not valid(hp) then return end
+    local horde = valid(FindFirstOf("HordeModeActor_C"))
+    local mask = hp.bIsWearingGasMask and true or false
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(pc) and not pc:IsLocalController() and valid(pc.Pawn) then
+            local key = pc:GetFullName()
+            if not horde and not S.lwSent[key] then
+                S.lwSent[key] = true
+                pcall(function() S.toClient(pc, "LW", classPath(hp.CurrentWeapon)) end)
+            end
+            if S.gmSent[key] ~= mask then
+                S.gmSent[key] = mask
+                S.toClient(pc, "GM", mask and 1 or 0)
+                pcall(function()
+                    if mask then pc.Pawn:StartWearingGasMask(true) else pc.Pawn:StopWearingGasMask(true) end
+                end)
+            end
+        end
+    end
+end)
+
+S.lwWant = nil
+handlers.client["LW"] = function(_, p) S.lwWant = { cls = p[1], at = os.clock() + 4 } end
+S.every(500, function()
+    if not S.joined or not S.lwWant or os.clock() < S.lwWant.at then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or not valid(pawn.CurrentWeapon) then return end
+    local want = S.lwWant
+    S.lwWant = nil
+    if classPath(pawn.CurrentWeapon) == want.cls then return end
+    local cls = StaticFindObject(want.cls)
+    if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(want.cls) end) end
+    if not valid(cls) then return end
+    pcall(function()
+        local l = pawn:K2_GetActorLocation()
+        local r = math.rad(pawn:K2_GetActorRotation().Yaw)
+        world():SpawnActor(cls, { X = l.X + math.cos(r) * 60, Y = l.Y + math.sin(r) * 60, Z = l.Z - 40 }, { Pitch = 0, Yaw = 0, Roll = 0 })
+        S.notify(S.isRussian() and "CO-OP: оружие миссии лежит у ваших ног - удерживайте F"
+            or "CO-OP: your mission weapon is at your feet - hold F to take it")
+        log("mission weapon dropped: " .. want.cls)
+    end)
+end)
+handlers.client["GM"] = function(_, p)
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) then S.gmWant = p[1] == "1" return end
+    local on = p[1] == "1"
+    if (pawn.bIsWearingGasMask and true or false) ~= on then
+        pcall(function() if on then pawn:StartWearingGasMask(false) else pawn:StopWearingGasMask(false) end end)
+    end
+end
+-- a GM that came before our pawn existed
+S.every(1000, function()
+    if not S.joined or S.gmWant == nil then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or not controllerReady(pawn) then return end
+    local on = S.gmWant
+    S.gmWant = nil
+    pcall(function() if on then pawn:StartWearingGasMask(true) else pawn:StopWearingGasMask(true) end end)
+end)
+end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)

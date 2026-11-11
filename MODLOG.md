@@ -353,6 +353,11 @@
     (`world:SpawnActor` + `SpawnDefaultController`): у клиента те же копии, здоровье совпадает (с enemy_hp),
     урон по гостю идёт, снаряды (`BP_HelicopterMissile`, молотов) реплицируются (bReplicates=true). Ошибок нет.
     Полосы здоровья у HVT сайд-миссий нет и в одиночке. Скрипт `tools`-проб: scratchpad spawnboss.lua.
+64. **Снаряжение миссии и противогаз (v0.8.2)** — KillGhosts: у хоста SMG (из сохранения/уровня) и противогаз, у гостя
+    пистолет. `SwapWeapon`, `ForceEquipWeapon`, `BPInputWantPickupWeapon*` (только события), `WantedWeapon` из Lua
+    оружие клиенту НЕ дают — только настоящее удержание F. Поэтому хост шлёт `LW|класс` (не в «Орде»), клиент кладёт
+    такое оружие под ноги + уведомление. Противогаз: `bIsWearingGasMask`, `Start/StopWearingGasMask(bInstant)`;
+    хост → `GM|1/0` всем и надевает на марионеток. Путь карты: /Game/Maps/Campaign/Ghosts/KillGhosts_Persistent.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

@@ -90,6 +90,9 @@ KillCultists, KillGhosts, KillSyndicate, KillHorizon, KillMothman, Safehouse_Bet
   Chronos, Hellfire, Biohacker, BOPE, Medic, Convict, HECU Leader, Demoman, BlueSky, Imposter, Kramer, Spetsnaz...),
   описание `HVT_*_C` (BP_HVTInfo). Сайд-миссии — карты `/Game/Maps/SideMissions/**`.
   ✅ v0.8.0: полоса здоровья босса у клиента, ENEMY HEALTH в F4, HUD гостя, дуги попаданий.
+  ✅ v0.8.1: сайд-миссии, место появления гостя, меню блокируют управление.
+  ✅ Проверены HVT Chronos / Hellfire / Biohacker в коопе — синхронны, правок не нужно.
+  ⬜ Особые уровни: KillGhosts (Backrooms), KillMothman, KillHorizon, Safehouse_Betrayal, финал.
   Дальше: (UI босса создаёт GameMode хоста), особые механики боссов
   (Chronos — двойники-приманки), проверка хоста сайд-миссии через F4.
 - ✅ v0.7.6: сложность под число игроков (enemy_hp, +50% здоровья за игрока).

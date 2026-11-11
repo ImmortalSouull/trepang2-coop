@@ -349,6 +349,10 @@
 62. **Управление за меню** — в коопе игра не ставит паузу, Esc-меню (`UI_MainMenu_C`) и F4 пропускали управление.
     Пока открыто: `SetIgnoreMoveInput/LookInput(true)` + `pawn:DisableInput(pc)`; флаги переустанавливаем, если их
     сбросили (меню/конец катсцены). У гостя после подключения висел `UI_MainMenu_C` — первые 15 с убираем.
+63. **Проверка боссов HVT (2026-11-11)** — Chronos (`NPC_HVT_Chronos_1Actual`), Hellfire, Biohacker, заспавненные у хоста
+    (`world:SpawnActor` + `SpawnDefaultController`): у клиента те же копии, здоровье совпадает (с enemy_hp),
+    урон по гостю идёт, снаряды (`BP_HelicopterMissile`, молотов) реплицируются (bReplicates=true). Ошибок нет.
+    Полосы здоровья у HVT сайд-миссий нет и в одиночке. Скрипт `tools`-проб: scratchpad spawnboss.lua.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

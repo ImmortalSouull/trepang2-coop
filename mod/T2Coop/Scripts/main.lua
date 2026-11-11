@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.8.4"
+local VERSION = "0.9.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1119,6 +1119,49 @@ function S.say(text)
 end
 handlers.client["NT"] = function(_, p) S.notify(p[1] or "") end
 handlers.client["RV"] = function() local p = myPawn(); if valid(p) and me.down then setDown(p, false) end end
+
+-- Spectating while down: 2 s after going down the camera moves to a partner (left mouse button
+-- switches between them and yourself); back to your own eyes when you're revived.
+S.spec = { on = false, since = nil, lmb = false, self = false }
+S.every(30, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local pc, p = localPC(), myPawn()
+    if not valid(pc) or not valid(p) then return end
+    local sp = S.spec
+    if S.cut and S.cut.active then return end
+    if not me.down then
+        if sp.on then
+            sp.on = false
+            pcall(function() pc:SetViewTargetWithBlend(p, 0.3, 0, 0, false) end)
+        end
+        sp.since, sp.self = nil, false
+        return
+    end
+    sp.since = sp.since or os.clock()
+    if os.clock() - sp.since < 2 then return end
+    S.LMB = S.LMB or { KeyName = FName("LeftMouseButton", EFindName.FNAME_Add) }
+    local down = false
+    pcall(function() down = pc:IsInputKeyDown(S.LMB) end)
+    if down and not sp.lmb then sp.self = not sp.self end
+    sp.lmb = down
+    local target = p
+    if not sp.self then
+        local mine = p:GetFullName()
+        for _, o in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+            if o:GetFullName() ~= mine and not o.bHidden and not o.bIsDead then target = o break end
+        end
+    end
+    local cur
+    pcall(function() cur = pc:GetViewTarget() end)
+    if not valid(cur) or cur:GetFullName() ~= target:GetFullName() then
+        pcall(function() pc:SetViewTargetWithBlend(target, 0.5, 0, 0, false) end)
+        if target ~= p and not sp.on then
+            S.notify(S.isRussian() and "CO-OP: вы смотрите глазами напарника (ЛКМ - на себя)"
+                or "CO-OP: watching your partner (left click - your own view)")
+        end
+    end
+    sp.on = true
+end)
 
 local function playerPositions()
     local list = {}

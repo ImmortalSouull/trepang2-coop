@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.8.4
+0.9.0
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -34,7 +34,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]Boss health bars[/b] show for every player, not just the host.
 [*][b]Tougher enemies for more players[/b]: +50% health for every extra player (campaign and Horde). The host picks it in the F4 menu - ENEMY HEALTH: from +0% to +200% per extra player.
 [*]Checkpoints are saved by the host only - friends' own campaign saves are left alone.
-[*][b]Down & revive[/b]: drop below 30% HP and you go down; a partner standing next to you revives you. If everyone is down, the group goes back to the last checkpoint.
+[*][b]Down & revive[/b]: drop below 30% HP and you go down; a partner standing next to you revives you. While down you watch through your partner's eyes (left click switches to your own view). If everyone is down, the group goes back to the last checkpoint.
 [/list]
 
 [size=4][b]Horde co-op[/b][/size]
@@ -92,7 +92,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]v0.7.4[/b] - done: interactions (terminals, buttons, scenes), objective markers, human shields, partner fire
 [*][b]v0.8.0-0.8.4[/b] - done: boss health bars for all, enemy health setting in the menu, side missions, mission weapon and gas mask for friends
 [*][b]v0.8.x[/b] - bosses' special mechanics, special levels, side missions
-[*][b]v0.9[/b] - progression for every player, spectating while down, rejoining, a full campaign run together
+[*][b]v0.9[/b] - spectating while down (done in 0.9.0), progression for every player, rejoining, a full campaign run together
 [*][b]v1.0[/b] - the whole Trepang2 campaign + Horde playable in co-op
 [/list]
 

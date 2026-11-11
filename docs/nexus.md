@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.7.4
+0.7.5
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -47,7 +47,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [size=4][b]Players[/b][/size]
 [list]
 [*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player. Or [b]dress up as an enemy[/b]: in the F4 menu pick any of about 330 enemy variants from 30 factions (Mall Cops, Cultists, Horizon guards / elite / TTMF with night vision / Black Ops, Hazmats, Bad Oil bandits, Lawyer Thugs, Replicas, 107 and more) - with a turning preview of how the others will see you. Real enemy gear, everyone sees it.
-[*][b]Fully animated partners[/b]: walking, sprinting, crouching, sliding, jumping, dropkick, aiming up and down, the right grip for every weapon, dual wielding.
+[*][b]Fully animated partners[/b]: walking, sprinting, crouching, sliding, jumping, dropkick, aiming up and down, the right grip for every weapon, dual wielding - and reloading, weapon melee strikes (also on enemies on the ground), grenade throws and weapon switches.
 [*]Partners' and the host's shots are seen and heard by everyone (gun animation, sound, muzzle flash).
 [*]Steam names over partner markers (with distance, visible through walls), "joined" / "left" notices.
 [*]Tested with 3 players; works with more.
@@ -76,7 +76,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [list]
 [*]Campaign: bosses and some special scenes are not synced yet; elevators are shared through their buttons but not tested on every level yet.
 [*]After a level change friends reconnect in about 30-40 seconds while the level loads.
-[*]Partners' reload and ground melee strike are not shown on their body; dual wielding shows both guns but with a two-handed pose.
+[*]Dual wielding shows both guns but with a two-handed pose.
 [*]Ammo and health pickups are separate for each player.
 [*]Steam mode is not yet tested between two different Steam accounts; players on a non-Steam copy can only use IP mode.
 [*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini

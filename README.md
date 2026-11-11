@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.7.4 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.7.5 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -47,6 +47,7 @@ the story for everyone - and story objective markers show for every player.
 - Shots, damage (incl. headshots) and enemy deaths synced both ways; enemies hurt both players.
 - Horde HUD for the partner; down & revive instead of death; auto-reconnect after an arena restart.
 - Partner picks up dropped / bought weapons; partner kills earn Horde money; partner markers; 3+ players.
+- Partners' reload, weapon melee strike, grenade throw and weapon switch are shown on their body.
 - Human shields: a partner can grab an enemy (hold it, let it go, throw it) and everyone sees it.
 - Partner fire (incendiary rounds, molotovs) burns the real enemies; burning enemies burn for everyone.
 

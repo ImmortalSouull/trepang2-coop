@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.4"
+local VERSION = "0.7.5"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -877,6 +877,97 @@ end
 handlers.client["HF"] = function(_, p)
     local pawn = S.bodyOf(tonumber(p[1]))
     if pawn then S.shotFx(pawn, tonumber(p[2]) or 1) end
+end
+
+---------------------------------------------------------------------------
+-- Body actions: reload, weapon melee strike (also on bodies lying on the ground), grenade throw,
+-- weapon switch. The game plays them only on the first-person arms; each weapon's WeaponAnimSet
+-- has the matching third-person body montage (Reload[i].FPP_Character / .TPP_Character). Every
+-- machine watches the arms montage of its own pawn; a new one is looked up in the weapon's set and
+-- sent as "BA|set|index" (client -> host, the host plays it on that partner's body and passes
+-- "BA|pid|set|index" on; the host's own go to every client). The receiver plays the TPP montage of
+-- the same weapon on that player's body (and the weapon's own part, e.g. the magazine).
+---------------------------------------------------------------------------
+do
+local ANIM_SETS = { "Reload", "Reload_Empty", "Reload_Cyclic", "Reload_Hostage", "Reload_Hostage_Empty",
+    "Melee", "Melee_Impact", "Throw_Grenade", "Throw_Hostage", "Equip", "Equip_Hostage", "Unequip", "Inspect" }
+local function ownPawn()
+    if S.joined then return S.client and S.client.pawn end
+    local pc = localPC()
+    return valid(pc) and pc.Pawn or nil
+end
+-- arms montage -> (set, index) in the weapon's anim set
+local function findAction(w, montage)
+    local name = montage:GetFName():ToString()
+    local set = w.WeaponAnimSet
+    for _, k in ipairs(ANIM_SETS) do
+        local arr = set[k]
+        for i = 1, arr:GetArrayNum() do
+            local f = arr[i].FPP_Character
+            if valid(f) and f:GetFName():ToString() == name then return k, i end
+        end
+    end
+end
+function S.playBodyAction(pawn, setName, idx)
+    if not valid(pawn) then return false end
+    local w = pawn.CurrentWeapon
+    if not valid(w) then return false end
+    local ok, played = pcall(function()
+        local e = w.WeaponAnimSet[setName][idx]
+        local m = e.TPP_Character
+        if not valid(m) then return false end
+        local ai = pawn.Mesh:GetAnimInstance()
+        ai:Montage_Play(m, 1.0, 0, 0.0, true)
+        pcall(function()
+            local wm = e.TPP_Weapon
+            if valid(wm) then w.Mesh3P:GetAnimInstance():Montage_Play(wm, 1.0, 0, 0.0, true) end
+        end)
+        return true
+    end)
+    S.stats.bodyActions = (S.stats.bodyActions or 0) + 1
+    return ok and played
+end
+
+local ba = { last = nil }
+S.every(0, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local pawn = ownPawn()
+    if not valid(pawn) then return end
+    local cur
+    pcall(function()
+        local m = pawn.Mesh1P:GetAnimInstance():GetCurrentActiveMontage()
+        if valid(m) then cur = m end
+    end)
+    local key = cur and cur:GetAddress() or nil
+    if key == ba.last then return end
+    ba.last = key
+    if not cur then return end
+    local w = pawn.CurrentWeapon
+    if not valid(w) then return end
+    local ok, setName, idx = pcall(findAction, w, cur)
+    if not ok or not setName then return end
+    if S.joined then
+        S.toServer("BA", setName, idx)
+    elseif #(FindAllOf("PlayerController") or {}) > 1 then
+        S.toClients("BA", pidOf(pawn) or -1, setName, idx)
+    end
+end)
+
+handlers.server["BA"] = function(pc, p)
+    local setName, idx = p[1], tonumber(p[2]) or 1
+    S.playBodyAction(pc.Pawn, setName, idx)
+    local pid = pidOf(pc.Pawn)
+    if not pid then return end
+    for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+            S.toClient(other, "BA", pid, setName, idx)
+        end
+    end
+end
+handlers.client["BA"] = function(_, p)
+    local pawn = S.bodyOf(tonumber(p[1]))
+    if pawn then S.playBodyAction(pawn, p[2], tonumber(p[3]) or 1) end
+end
 end
 
 ---------------------------------------------------------------------------

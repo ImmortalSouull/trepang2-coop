@@ -325,6 +325,11 @@
     Сообщения FI (клиент→хост), FV (хост→клиенты, для вида). Копии у клиента никого не обжигают.
 55. **Счётчик врагов «Орды» у клиента был 0** — post-хук на Tick виджета не срабатывает (BP), Tick пишет 0 каждый
     кадр. Подменили переменную `EnemiesTextBox` на запасной TextBlock (Tick пишет в него), видимый держим сами.
+56. **Действия тела (v0.7.5)** — у оружия `WeaponAnimSet` (FWeaponAnimSet): массивы Reload, Reload_Empty, Melee,
+    Melee_Impact, Throw_Grenade, Equip... из FWeaponAnim {FPP_Character, FPP_Weapon, TPP_Character, TPP_Weapon}.
+    Своя пешка: `Mesh1P:GetAnimInstance():GetCurrentActiveMontage()` → ищем FPP в наборе → `BA|набор|индекс`.
+    Получатель: `pawn.Mesh:GetAnimInstance():Montage_Play(TPP_Character, 1, 0, 0, true)` (+ TPP_Weapon на Mesh3P).
+    ABP_TPP_Player монтажи проигрывает (перезарядка, замах видны). Fire не шлём (выстрелы — HF).
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

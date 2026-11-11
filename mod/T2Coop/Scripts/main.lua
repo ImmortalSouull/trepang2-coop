@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.1"
+local VERSION = "0.9.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4307,6 +4307,23 @@ S.every(500, function()
     end
 end)
 end
+
+-- Client: while our view is a cinematic camera (scripted scenes the host's game plays as camera
+-- shots, e.g. the safehouse betrayal) our HUD is hidden, like the host's.
+S.every(250, function()
+    if not S.joined then return end
+    local pc, pawn = localPC(), S.client and S.client.pawn
+    if not valid(pc) or not valid(pawn) then return end
+    local cine = false
+    pcall(function()
+        local v = pc:GetViewTarget()
+        cine = valid(v) and v:GetClass():GetFName():ToString():find("Camera") ~= nil
+    end)
+    if cine ~= (S.cineHud or false) then
+        S.cineHud = cine
+        pcall(function() pawn.PlayerHud:SetRenderOpacity(cine and 0 or 1) end)
+    end
+end)
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)

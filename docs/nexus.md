@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.9.1
+0.9.2
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -79,7 +79,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
 [*]Campaign: bosses and some special scenes are not synced yet; elevators are shared through their buttons but not tested on every level yet.
-[*]Checked in co-op: Prologue, KillCultists, KillSyndicate, KillGhosts, KillMothman, KillHorizon, the Safehouse betrayal, the credits, side missions. In the betrayal scene the partner still sees their HUD.
+[*]Checked in co-op: Prologue, KillCultists, KillSyndicate, KillGhosts, KillMothman, KillHorizon, the Safehouse betrayal, the credits, side missions.
 [*]After a level change friends reconnect in about 30-40 seconds while the level loads.
 [*]Dual wielding shows both guns but with a two-handed pose.
 [*]Ammo and health pickups are separate for each player.

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.8.0"
+local VERSION = "0.8.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -195,6 +195,40 @@ local function localPC()
 end
 
 -- Server: give every remote player a pawn next to the host.
+-- A free spot next to `pawn` for player number n: try 8 directions (behind first), 120-240 units
+-- out; the way there must be clear (no wall in between) and there must be floor under it.
+-- Falls back to the pawn's own spot (better than inside a wall / outside the map).
+function S.freeSpotNear(pawn, n)
+    local hl = pawn:K2_GetActorLocation()
+    local yaw = pawn:K2_GetActorRotation().Yaw
+    local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local col = { R = 1, G = 0, B = 0, A = 1 }
+    local function blocked(a, b)
+        local hit = {}
+        local ok, res = pcall(function()
+            return KSL:LineTraceSingle(world(), a, b, 0, false, { pawn }, 0, hit, true, col, col, 0)
+        end)
+        return (not ok) or res, hit
+    end
+    for _, dist in ipairs({ 130 + 40 * (n - 1), 220 }) do
+        for _, turn in ipairs({ 180, 90, -90, 135, -135, 0, 45, -45 }) do
+            local r = math.rad(yaw + turn)
+            local spot = { X = hl.X + math.cos(r) * dist, Y = hl.Y + math.sin(r) * dist, Z = hl.Z }
+            -- clear at body height (also a bit wider than the capsule)
+            local far = { X = hl.X + math.cos(r) * (dist + 45), Y = hl.Y + math.sin(r) * (dist + 45), Z = hl.Z }
+            if not blocked(hl, far) then
+                local down, hit = blocked(spot, { X = spot.X, Y = spot.Y, Z = spot.Z - 250 })
+                if down then
+                    local z = spot.Z
+                    pcall(function() z = hit.ImpactPoint.Z + 100 end)
+                    return { X = spot.X, Y = spot.Y, Z = math.max(z, spot.Z) + 5 }
+                end
+            end
+        end
+    end
+    return { X = hl.X, Y = hl.Y, Z = hl.Z + 20 }
+end
+
 local function setupRemotePlayers()
     local host = localPC()
     if not valid(host) or not valid(host.Pawn) then return end
@@ -210,12 +244,11 @@ local function setupRemotePlayers()
             if valid(pawn) and not S.known[key] then
                 S.known[key] = true
                 S.spawnIndex = S.spawnIndex + 1
-                local hl = host.Pawn:K2_GetActorLocation()
                 local hr = host.Pawn:K2_GetActorRotation()
-                local off = 120 * S.spawnIndex
-                pawn:K2_SetActorLocation({ X = hl.X + off, Y = hl.Y, Z = hl.Z + 20 }, false, {}, true)
+                local spot = S.freeSpotNear(host.Pawn, S.spawnIndex)
+                pawn:K2_SetActorLocation(spot, false, {}, true)
                 pcall(function() pc:ClientSetRotation(hr, false) end)
-                S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", hl.X + off, hl.Y, hl.Z + 20), string.format("%.1f", hr.Yaw))
+                S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", spot.X, spot.Y, spot.Z), string.format("%.1f", hr.Yaw))
                 log("placed " .. pawn:GetFName():ToString() .. " for " .. pc:GetFName():ToString())
                 if S.sendCampaignState then pcall(S.sendCampaignState, pc) end
                 if S.sendDoors then pcall(S.sendDoors, pc) end
@@ -644,6 +677,7 @@ local function fixClientController()
     GS:FinishSpawningActor(a, xf)
     a:K2_SetActorRotation({ Pitch = 0, Yaw = yaw, Roll = 0 }, true)
     c.pawn, c.puppet = a, puppet
+    c.spawnedAt = os.clock()
     pc:ClientRestart(a)
     pc.MyPlayer = a
     -- Our pawn made its own HUD in BeginPlay; the one made for the server's pawn would stay on
@@ -4009,6 +4043,26 @@ handlers.client["DI"] = function(_, p)
 end
 end
 
+-- Client: the main menu / pause menu widget (UI_MainMenu_C) we came from can stay on screen after
+-- joining (seen on side missions): for the first 15 s of our pawn, close it and give input back.
+S.every(500, function()
+    if not S.joined then return end
+    local c = S.client
+    if not c or not valid(c.pawn) or os.clock() - (c.spawnedAt or 0) > 15 then return end
+    for _, w in ipairs(FindAllOf("UI_MainMenu_C") or {}) do
+        local ok, iv = pcall(function() return w:IsInViewport() end)
+        if ok and iv then
+            pcall(function() w:RemoveFromParent() end)
+            pcall(function()
+                local pc = localPC()
+                StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary"):SetInputMode_GameOnly(pc)
+                pc.bShowMouseCursor = false
+            end)
+            log("closed a leftover menu")
+        end
+    end
+end)
+
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)
     local pc = localPC()
@@ -4857,6 +4911,44 @@ end
 function S.menuToggle()
     if menu.open and valid(menu.w) then S.menuClose() else S.menuOpen() end
 end
+
+-- While the F4 menu or the game's own Esc menu (UI_MainMenu_C; in co-op the game can't pause) is
+-- open, the player's controls are off: no walking, looking or shooting behind the menu.
+S.inputBlock = { on = false, pawn = nil }
+S.every(100, function()
+    local pc = localPC()
+    local pawn = myPawn()
+    local want = false
+    if valid(pc) and valid(pawn) then
+        if menu.open and valid(menu.w) then want = true end
+        if not want then
+            for _, w in ipairs(FindAllOf("UI_MainMenu_C") or {}) do
+                local ok, iv = pcall(function() return w:IsInViewport() end)
+                if ok and iv then want = true break end
+            end
+        end
+    end
+    if want and S.inputBlock.on then
+        -- story scripts (end of a cutscene) reset the ignore flags: put them back
+        pcall(function()
+            if not pc:IsMoveInputIgnored() then pc:SetIgnoreMoveInput(true) end
+            if not pc:IsLookInputIgnored() then pc:SetIgnoreLookInput(true) end
+        end)
+    end
+    if want == S.inputBlock.on then return end
+    S.inputBlock.on = want
+    if want then
+        S.inputBlock.pawn = pawn
+        pcall(function() pc:SetIgnoreMoveInput(true) end)
+        pcall(function() pc:SetIgnoreLookInput(true) end)
+        pcall(function() pawn:DisableInput(pc) end)
+    else
+        pcall(function() pc:SetIgnoreMoveInput(false) end)
+        pcall(function() pc:SetIgnoreLookInput(false) end)
+        if valid(S.inputBlock.pawn) then pcall(function() S.inputBlock.pawn:EnableInput(pc) end) end
+        S.inputBlock.pawn = nil
+    end
+end)
 
 S.every(0, function()
     if not menu.open then return end

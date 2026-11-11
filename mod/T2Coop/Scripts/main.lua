@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.3"
+local VERSION = "0.7.4"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -754,9 +754,22 @@ S.every(100, function()
     local c = S.client
     if not S.joined or not c or not valid(c.hud) or not c.hudParts then return end
     local ui, parts = c.hud, c.hudParts
+    -- the widget's Tick writes "enemies left: 0" (this machine's empty game state) into
+    -- EnemiesTextBox every frame: point that variable at a spare text block nobody sees and
+    -- keep the visible one for the host's value
+    if c.enemiesFor ~= ui:GetFullName() then
+        pcall(function()
+            local real = ui.EnemiesTextBox
+            local spare = StaticConstructObject(StaticFindObject("/Script/UMG.TextBlock"), ui, FName("T2CSpareEnemies", EFindName.FNAME_Add))
+            if valid(real) and valid(spare) then
+                ui.EnemiesTextBox = spare
+                c.enemiesReal, c.enemiesFor = real, ui:GetFullName()
+            end
+        end)
+    end
     pcall(function() ui.WaveNum:SetText(FText(parts[1] or "")) end)
     pcall(function() ui.WaveNumText:SetText(FText(parts[2] or "")) end)
-    pcall(function() ui.EnemiesTextBox:SetText(FText(parts[3] or "")) end)
+    pcall(function() (valid(c.enemiesReal) and c.enemiesReal or ui.EnemiesTextBox):SetText(FText(parts[3] or "")) end)
     pcall(function() ui.MoneyText:SetText(FText(parts[4] or "")) end)
     pcall(function() ui.ElapsedTimer:SetText(FText(parts[5] or "")) end)
 end)
@@ -1392,6 +1405,7 @@ end)
 -- to every other player. On the host the label also says when that player is down.
 ---------------------------------------------------------------------------
 local ICON_CLASS = "/Game/UI/Objective/BP_ObjectiveIcon.BP_ObjectiveIcon_C"
+S.modIcons = {}   -- full names of icons this mod spawned (never synced as story objectives)
 S.icons = {}   -- target full name -> { icon = actor, label = string }
 local function otherPlayers()
     local list = {}
@@ -1429,6 +1443,7 @@ S.every(1000, function()
                 local ok, icon = pcall(function() return world():SpawnActor(cls, { X = l.X, Y = l.Y, Z = l.Z + 110 }, { Pitch = 0, Yaw = 0, Roll = 0 }) end)
                 if ok and valid(icon) then
                     icon.OwningPlayer = me
+                    S.modIcons[icon:GetFullName()] = true
                     pcall(function() icon:K2_AttachToActor(p, FName("None"), 1, 1, 1, false) end)
                     pcall(function() icon:Sickle_ShowIcon() end)
                     e = { icon = icon, label = nil }
@@ -2736,6 +2751,7 @@ S.every(250, function()
 end)
 -- host -> a client that just arrived: the story so far, and the current mission
 function S.sendCampaignState(pc)
+    pcall(S.sendInteractState, pc)
     for _, t in ipairs(S.allOf(TRIGGER_CLASS)) do
         if t.NumTimesTriggered > 0 then S.toClient(pc, "TR", t:GetFName():ToString(), t.NumTimesTriggered) end
     end
@@ -2890,6 +2906,7 @@ local function showGate(k, n, point)
             if not valid(cls) and LoadAsset then cls = LoadAsset(ICON_CLASS) end
             local icon = world():SpawnActor(cls, { X = point.X, Y = point.Y, Z = point.Z + 60 }, { Pitch = 0, Yaw = 0, Roll = 0 })
             icon.OwningPlayer = localPC()
+            S.modIcons[icon:GetFullName()] = true
             pcall(function() icon:Sickle_ShowIcon() end)
             pcall(function() icon:HackOverrideSubtitle(FText(S.isRussian() and "СБОР" or "GATHER HERE")) end)
             gateMark.icon = icon
@@ -3190,6 +3207,525 @@ handlers.client["DO"] = function(_, p)
             return
         end
     end
+end
+
+---------------------------------------------------------------------------
+-- Interactions: everything used with the interact key (UBaseInteractableComponent) - terminals,
+-- buttons, levers, elevators, scripted "player interaction" scenes (BP_PlayerInteraction_C, e.g.
+-- the cultists' heavy doors). The game calls these natively (Lua hooks never fire), so every
+-- machine watches its own pawn's focused component (pawn.InteractableComp): a timed one that
+-- counted down to the end, or an instant one when the interact key goes down.
+--   client -> host "IA|owner|comp": the host uses its copy with the partner's body as the
+--     instigator (InteractDuration -1 for the call = instant). The story runs on the host.
+--   host -> clients "IX|owner|comp": it was used; a client uses its own copy too (machines and
+--     elevators move locally), a scripted scene only plays the object's animation there.
+--   host -> clients "IE|owner|comp|1/0": the host's level scripts switched it on / off.
+-- Personal things (intel, collectables, pickups, crates, doors, the safehouse) stay per player.
+---------------------------------------------------------------------------
+do
+local PERSONAL = { "intel", "collectable", "pickup", "supplycrate", "gramophone", "weaponbench",
+    "safehouse", "buyzone", "smokegrenade", "weapon", "ammo", "health", "armor", "exitportal" }
+local CLIENT_NO_MIRROR = { "extraction", "helicopter", "mission", "portal" }
+local personalCache, sceneCache = {}, {}
+local function clsName(o) return o:GetClass():GetFName():ToString() end
+local function isPersonal(o)
+    local cls = clsName(o)
+    local v = personalCache[cls]
+    if v == nil then
+        local l = cls:lower()
+        v = false
+        for _, w in ipairs(PERSONAL) do if l:find(w, 1, true) then v = true end end
+        if not v then pcall(function() if o:IsA(classOf(DOOR_CLASS)) then v = true end end) end
+        personalCache[cls] = v
+    end
+    return v
+end
+local function isScene(o)
+    local cls = clsName(o)
+    local v = sceneCache[cls]
+    if v == nil then
+        v = false
+        local c = o:GetClass()
+        while valid(c) do
+            if c:GetFName():ToString() == "BP_PlayerInteraction_C" then v = true break end
+            c = c:GetSuperStruct()
+        end
+        sceneCache[cls] = v
+    end
+    return v
+end
+local function sharedComps()
+    local out = {}
+    for _, c in ipairs(FindAllOf("BaseInteractableComponent") or {}) do
+        pcall(function()
+            local o = c:GetOwner()
+            if valid(o) and not isPersonal(o) then
+                table.insert(out, { c = c, o = o, owner = o:GetFName():ToString(), name = c:GetFName():ToString() })
+            end
+        end)
+    end
+    return out
+end
+local function findComp(owner, name)
+    for _, e in ipairs(sharedComps()) do
+        if e.owner == owner and e.name == name then return e.c, e.o end
+    end
+end
+-- use a component right now, as `who` (a timed one too: duration -1 for the call)
+local function useNow(c, who)
+    local d = c.InteractDuration
+    c.InteractDuration = -1
+    local ok, err = pcall(function() c:Interact(who) end)
+    c.InteractDuration = d
+    return ok, err
+end
+S.useNow = useNow
+
+-- what a component is, read while it is still alive (a used pickup / intel is destroyed at once)
+local function compInfo(c)
+    local o = c:GetOwner()
+    if not valid(o) then return nil end
+    return { owner = o:GetFName():ToString(), name = c:GetFName():ToString(), cls = clsName(o),
+        personal = isPersonal(o), instant = c.InteractDuration <= 0, allow = c.bAllowInteraction }
+end
+local function interacted(info)
+    if not info then return end
+    if S.iaDebug then log("used (any): " .. info.owner) end
+    if info.personal then return end
+    log("interaction: " .. info.owner .. "/" .. info.name .. " (" .. info.cls .. ")")
+    S.stats.interactions = (S.stats.interactions or 0) + 1
+    if S.joined then S.toServer("IA", info.owner, info.name) else S.toClients("IX", info.owner, info.name) end
+end
+S.interacted = function(c) interacted(compInfo(c)) end
+
+-- ia.cur: the focused component (address + info); ia.hold: a timed one counting down
+local ia = { cur = nil, hold = nil, keyWas = false }
+local INTERACT_KEYS
+S.every(0, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local pawn, pc = myPawn(), localPC()
+    if not valid(pawn) or not valid(pc) then return end
+    INTERACT_KEYS = INTERACT_KEYS or {
+        { KeyName = FName("F", EFindName.FNAME_Add) },
+        { KeyName = FName("Gamepad_FaceButton_Left", EFindName.FNAME_Add) },
+    }
+    local down = false
+    for _, k in ipairs(INTERACT_KEYS) do
+        if pc:IsInputKeyDown(k) then down = true end
+    end
+    local c = pawn.InteractableComp
+    if not valid(c) then c = nil end
+    -- a timed interaction we saw counting down: finished (used) or let go (cancelled)?
+    if ia.hold then
+        local h = ia.hold
+        if c and c:GetAddress() == h.addr and c.bIsCountingDownDuration then
+            h.rem = c.RemainingDuration
+        else
+            -- gone from focus / stopped counting: used if it was about done (it may vanish on use)
+            if h.rem < 0.25 then interacted(h.info) end
+            ia.hold = nil
+        end
+    end
+    -- instant ones are used on the key press, often before we look: take what was focused last tick
+    if down and not ia.keyWas then
+        local cur = ia.cur
+        if c and (not cur or cur.addr ~= c:GetAddress()) then cur = { addr = c:GetAddress(), info = compInfo(c) } end
+        if cur and cur.info and cur.info.instant and cur.info.allow then interacted(cur.info) end
+    end
+    if c then
+        local addr = c:GetAddress()
+        if not ia.cur or ia.cur.addr ~= addr then ia.cur = { addr = addr, info = compInfo(c) } end
+        if ia.cur.info then ia.cur.info.allow = c.bAllowInteraction end
+        if not ia.hold and ia.cur.info and not ia.cur.info.instant and c.bIsCountingDownDuration then
+            ia.hold = { addr = addr, info = ia.cur.info, rem = c.RemainingDuration }
+        end
+    else
+        ia.cur = nil
+    end
+    ia.keyWas = down
+end)
+
+local function otherClients(except)
+    local out = {}
+    local ex = valid(except) and except:GetFullName() or ""
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(pc) and not pc:IsLocalController() and pc:GetFullName() ~= ex then table.insert(out, pc) end
+    end
+    return out
+end
+
+handlers.server["IA"] = function(pc, p)
+    local c, o = findComp(p[1], p[2])
+    if not valid(c) then log("IA: no " .. tostring(p[1]) .. "/" .. tostring(p[2])) return end
+    if not c.bAllowInteraction then log("IA: host's " .. p[1] .. " is off") return end
+    local who = valid(pc.Pawn) and pc.Pawn or myPawn()
+    local ok, err = useNow(c, who)
+    log("partner used " .. p[1] .. "/" .. p[2] .. (ok and "" or (": " .. tostring(err))))
+    for _, other in ipairs(otherClients(pc)) do S.toClient(other, "IX", p[1], p[2]) end
+end
+
+handlers.client["IX"] = function(_, p)
+    local c, o = findComp(p[1], p[2])
+    if not valid(c) then return end
+    if isScene(o) then
+        -- someone else's scripted scene: just play the object's part (doors swing open...)
+        pcall(function() o.Interactable_SkeletalMesh:PlayAnimation(o.InteractionAnimation_Interactable, false) end)
+        pcall(function() c:DisableInteraction() end)
+        log("host scene " .. p[1] .. ": object animation")
+        return
+    end
+    local l = clsName(o):lower()
+    for _, w in ipairs(CLIENT_NO_MIRROR) do if l:find(w, 1, true) then return end end
+    local pawn = myPawn()
+    if valid(pawn) then
+        local ok, err = useNow(c, pawn)
+        log("host used " .. p[1] .. "/" .. p[2] .. (ok and "" or (": " .. tostring(err))))
+    end
+end
+
+-- host: interactables its level scripts switch on/off
+S.ieSeen = {}
+S.every(500, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    for _, e in ipairs(sharedComps()) do
+        local k = e.owner .. "|" .. e.name
+        local v = e.c.bAllowInteraction and 1 or 0
+        local was = S.ieSeen[k]
+        S.ieSeen[k] = v
+        if was ~= nil and was ~= v then S.toClients("IE", e.owner, e.name, v) end
+    end
+end)
+S.ieHost = {}   -- client: owner|comp -> what the host says
+handlers.client["IE"] = function(_, p)
+    S.ieHost[p[1] .. "|" .. p[2]] = p[3] == "1"
+end
+S.every(500, function()
+    if not S.joined or not netDriver() or next(S.ieHost) == nil then return end
+    for _, e in ipairs(sharedComps()) do
+        local want = S.ieHost[e.owner .. "|" .. e.name]
+        if want ~= nil and e.c.bAllowInteraction ~= want then
+            pcall(function() if want then e.c:EnableInteraction() else e.c:DisableInteraction() end end)
+        end
+    end
+end)
+
+---------------------------------------------------------------------------
+-- Story objective markers (BP_ObjectiveIcon_C: "find the enforcer", distance through walls).
+-- The host's level scripts show/hide/move them; a client's copies don't follow on their own.
+-- Host -> clients "OB|name|1/0|x|y|z|text1 class|text2 class|subtitle" on every change (and all of
+-- them to a newcomer / after a level load). A client shows/hides/moves its copy of the same name,
+-- or spawns its own for an icon the host made at run time. The mod's own icons are left alone.
+---------------------------------------------------------------------------
+local function iconInfo(a)
+    local t1, t2, sub = "", "", ""
+    pcall(function() local c = a["Localized Text 1"]; if valid(c) then t1 = c:GetFullName():match("%s(.+)$") or "" end end)
+    pcall(function() local c = a["Localized Text 2"]; if valid(c) then t2 = c:GetFullName():match("%s(.+)$") or "" end end)
+    pcall(function() sub = (a.OverrideSubtitle:ToString():gsub("|", "/")) end)
+    return t1, t2, sub
+end
+local function far(a, b) return (a.X - b.X) ^ 2 + (a.Y - b.Y) ^ 2 + (a.Z - b.Z) ^ 2 > 50 * 50 end
+S.obSeen = {}
+local function obMessage(a)
+    local l = a:K2_GetActorLocation()
+    local t1, t2, sub = iconInfo(a)
+    return (a.IconActive and 1 or 0), l, t1, t2, sub
+end
+S.every(500, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    local alive = {}
+    for _, a in ipairs(S.allOf(ICON_CLASS)) do
+        if not S.modIcons[a:GetFullName()] then
+            local name = a:GetFName():ToString()
+            alive[name] = true
+            local act, l, t1, t2, sub = obMessage(a)
+            local key = act .. t1 .. t2 .. sub
+            local e = S.obSeen[name]
+            if not e or e.key ~= key or (act == 1 and far(e.l, l)) then
+                S.obSeen[name] = { key = key, l = l }
+                S.toClients("OB", name, act, fmtVec(l), t1, t2, sub)
+            end
+        end
+    end
+    for name in pairs(S.obSeen) do
+        if not alive[name] then
+            S.obSeen[name] = nil
+            S.toClients("OB", name, 0, "0|0|0", "", "", "")
+        end
+    end
+end)
+function S.sendInteractState(pc)
+    for _, e in ipairs(sharedComps()) do
+        S.toClient(pc, "IE", e.owner, e.name, e.c.bAllowInteraction and 1 or 0)
+    end
+    for _, a in ipairs(S.allOf(ICON_CLASS)) do
+        if not S.modIcons[a:GetFullName()] then
+            local act, l, t1, t2, sub = obMessage(a)
+            S.toClient(pc, "OB", a:GetFName():ToString(), act, fmtVec(l), t1, t2, sub)
+        end
+    end
+end
+
+S.obHost = {}   -- client: host icon name -> { act, own = our spawned copy or nil }
+local function textClass(path)
+    if not path or path == "" then return nil end
+    local c = StaticFindObject(path)
+    if not valid(c) and LoadAsset then pcall(function() c = LoadAsset(path) end) end
+    return valid(c) and c or nil
+end
+local function localIcon(name)
+    local e = S.obHost[name]
+    if e and valid(e.own) then return e.own end
+    for _, x in ipairs(S.allOf(ICON_CLASS)) do
+        if x:GetFName():ToString() == name and not S.modIcons[x:GetFullName()] then return x end
+    end
+end
+handlers.client["OB"] = function(_, p)
+    local name, act, loc = p[1], p[2] == "1", vec(p, 3)
+    local t1, t2, sub = p[6], p[7], p[8]
+    local e = S.obHost[name] or {}
+    S.obHost[name] = e
+    e.act = act
+    local a = localIcon(name)
+    if not valid(a) then
+        if not act then return end
+        pcall(function()
+            local cls = classOf(ICON_CLASS)
+            if not valid(cls) and LoadAsset then cls = LoadAsset(ICON_CLASS) end
+            a = world():SpawnActor(cls, loc, { Pitch = 0, Yaw = 0, Roll = 0 })
+            a.OwningPlayer = localPC()
+            e.own = a
+        end)
+        if not valid(a) then return end
+    end
+    local c1, c2 = textClass(t1), textClass(t2)
+    local o1, o2 = iconInfo(a)
+    if (c1 or c2) and (o1 ~= t1 or o2 ~= t2) then
+        pcall(function() a["Override Icon Text"](a, c1, c2) end)
+    end
+    if sub ~= "" then pcall(function() a:HackOverrideSubtitle(FText(sub)) end) end
+    if act then
+        if far(a:K2_GetActorLocation(), loc) then pcall(function() a:K2_SetActorLocation(loc, false, {}, true) end) end
+        if not a.IconActive then pcall(function() a:Sickle_ShowIcon() end) end
+    elseif a.IconActive then
+        pcall(function() a:Sickle_HideIcon() end)
+    end
+end
+-- client: our own copies follow the host only (our level scripts mostly don't run, but replayed
+-- triggers can still switch one on)
+S.every(1000, function()
+    if not S.joined or not netDriver() then return end
+    for _, a in ipairs(S.allOf(ICON_CLASS)) do
+        if not S.modIcons[a:GetFullName()] and a.IconActive then
+            local e = S.obHost[a:GetFName():ToString()]
+            if not e or not e.act then
+                local own = false
+                for _, x in pairs(S.obHost) do if valid(x.own) and x.own:GetFullName() == a:GetFullName() then own = x.act end end
+                if not own then pcall(function() a:Sickle_HideIcon() end) end
+            end
+        end
+    end
+end)
+
+end
+---------------------------------------------------------------------------
+-- Human shields (grab an enemy: BasePlayer.MyHostage / bHasAHostage, NPC.bIsAHostage).
+-- A client grabs its own network copy of the enemy; the real one lives on the host.
+--   client -> host "HG|x|y|z": I grabbed the enemy here -> the partner's body on the host takes the
+--     real enemy (TakeHostage): it stops fighting and is carried in front of the partner, so the
+--     copies everywhere follow. "HR|thrown": let go / threw it -> ReleaseHostage / ThrowHostage.
+--     Killing it needs nothing: the shot goes to the host like any other.
+--   host -> other clients "HH|enemy x|y|z|holder x|y|z" / "HE|enemy x|y|z": someone holds one; their
+--     copy plays the hostage part too (StartBeingHostage / StopBeingHostage), for the look only.
+---------------------------------------------------------------------------
+do
+local NPC_CLASS = "/Game/Blueprint/AI/BaseNPC.BaseNPC_C"
+local hg = { has = false }
+S.every(100, function()
+    if not S.joined or not netDriver() then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) then return end
+    local h = pawn.MyHostage
+    local has = pawn.bHasAHostage and valid(h)
+    if has and not hg.has then
+        hg.has, hg.npc = true, h
+        S.toServer("HG", fmtVec(h:K2_GetActorLocation()))
+        log("grabbed a hostage")
+    elseif not has and hg.has then
+        -- let go or thrown? A throw needs a moment to get going: look again in 0.4 s
+        hg.has = false
+        hg.release = { at = os.clock() + 0.4, npc = hg.npc, l = nil }
+        pcall(function() hg.release.l = hg.npc:K2_GetActorLocation() end)
+        hg.npc = nil
+    end
+    local r = hg.release
+    if r and os.clock() >= r.at then
+        hg.release = nil
+        local thrown = 0
+        pcall(function()
+            if r.l and dist2(r.npc:K2_GetActorLocation(), r.l) > 120 * 120 then thrown = 1 end
+        end)
+        S.toServer("HR", thrown)
+        log("let the hostage go" .. (thrown == 1 and " (thrown)" or ""))
+    end
+end)
+
+handlers.server["HG"] = function(pc, p)
+    local puppet = pc.Pawn
+    if not valid(puppet) or puppet.bHasAHostage then return end
+    local npc = nearestNPC(vec(p, 1), 300)
+    if not valid(npc) or npc.bIsAHostage then log("HG: no enemy there") return end
+    local ok, err = pcall(function() puppet:TakeHostage(npc) end)
+    log("partner took a hostage: " .. npc:GetFName():ToString() .. (ok and "" or (" " .. tostring(err))))
+end
+handlers.server["HR"] = function(pc, p)
+    local puppet = pc.Pawn
+    if not valid(puppet) or not puppet.bHasAHostage then return end
+    if p[1] == "1" then pcall(function() puppet:ThrowHostage() end)
+    else pcall(function() puppet:ReleaseHostage() end) end
+end
+
+-- host: who holds whom (for the look on the other machines)
+S.hhSeen = {}
+S.every(250, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    local now = {}
+    for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+        local pawn = valid(pc) and pc.Pawn
+        if valid(pawn) and pawn.bHasAHostage and valid(pawn.MyHostage) then
+            local h = pawn.MyHostage
+            local key = h:GetFullName()
+            now[key] = true
+            if not S.hhSeen[key] then
+                S.hhSeen[key] = { pc = pc, l = h:K2_GetActorLocation() }
+                local msg = { fmtVec(h:K2_GetActorLocation()), fmtVec(pawn:K2_GetActorLocation()) }
+                for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+                    if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+                        S.toClient(other, "HH", msg[1], msg[2])
+                    end
+                end
+            else
+                S.hhSeen[key].l = h:K2_GetActorLocation()
+            end
+        end
+    end
+    for key, e in pairs(S.hhSeen) do
+        if not now[key] then
+            S.hhSeen[key] = nil
+            for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+                if valid(other) and not other:IsLocalController() and (not valid(e.pc) or other:GetFullName() ~= e.pc:GetFullName()) then
+                    S.toClient(other, "HE", fmtVec(e.l))
+                end
+            end
+        end
+    end
+end)
+local function nearestPlayer(pos)
+    local best, bd = nil, 300 * 300
+    local mine = valid(myPawn()) and myPawn():GetFullName() or ""
+    for _, pl in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        if pl:GetFullName() ~= mine and not pl.bHidden then
+            local d = dist2(pl:K2_GetActorLocation(), pos)
+            if d < bd then best, bd = pl, d end
+        end
+    end
+    return best
+end
+handlers.client["HH"] = function(_, p)
+    local npc, holder = nearestNPC(vec(p, 1), 300), nearestPlayer(vec(p, 4))
+    if valid(npc) and valid(holder) and not npc.bIsAHostage then
+        pcall(function() npc:StartBeingHostage(holder) end)
+        log("host side hostage: " .. npc:GetFName():ToString())
+    end
+end
+handlers.client["HE"] = function(_, p)
+    local pos = vec(p, 1)
+    local best, bd = nil, 400 * 400
+    for _, n in ipairs(S.allOf(NPC_CLASS)) do
+        if n.bIsAHostage then
+            local d = dist2(n:K2_GetActorLocation(), pos)
+            if d < bd then best, bd = n, d end
+        end
+    end
+    if valid(best) then pcall(function() best:StopBeingHostage() end) end
+end
+end
+
+---------------------------------------------------------------------------
+-- Fire. Enemies burn through their FireComponent (IsOnFire, OwnerActorStartFire). A client's fire
+-- (incendiary rounds, molotov...) only lights its own copy of an enemy, which can't be hurt.
+--   client -> host "FI|x|y|z": a copy here caught fire from us -> the host lights the real enemy
+--     (burn damage and the kill go to the partner).
+--   host -> clients "FV|x|y|z": this enemy is burning -> the client lights its copy too, for the look.
+-- Copies on a client never burn anyone (the host's real fire does the damage).
+---------------------------------------------------------------------------
+do
+local NPC_CLASS = "/Game/Blueprint/AI/BaseNPC.BaseNPC_C"
+-- (the IsOnFire field reads false from Lua even while it burns: ask for the time left instead)
+local function burning(fc)
+    local t = {}
+    local ok = pcall(function() fc:GetRemainingBurnDuration(t) end)
+    return ok and (tonumber(t.RemainingTime) or 0) > 0
+end
+S.burning = burning
+S.fireOwn, S.fireHost = {}, {}
+S.every(250, function()
+    if not S.joined or not netDriver() then return end
+    for _, n in ipairs(S.allOf(NPC_CLASS)) do
+        pcall(function()
+            local fc = n.FireComponent
+            if not valid(fc) then return end
+            if fc.BurnDamageOtherAmountPlayer ~= 0 then
+                fc.BurnDamageOtherAmountPlayer = 0
+                fc.BurnDamageOtherAmount = 0
+            end
+            local key = n:GetFullName()
+            if burning(fc) then
+                if not S.fireOwn[key] and not S.fireHost[key] and not n.bIsDead and (tonumber(n.Health) or 0) > 0 then
+                    S.fireOwn[key] = true
+                    S.toServer("FI", fmtVec(n:K2_GetActorLocation()))
+                    log("our fire: " .. n:GetFName():ToString())
+                end
+            else
+                S.fireOwn[key], S.fireHost[key] = nil, nil
+            end
+        end)
+    end
+end)
+handlers.server["FI"] = function(pc, p)
+    local npc = nearestNPC(vec(p, 1), 300)
+    if not valid(npc) then return end
+    local fc = npc.FireComponent
+    if valid(fc) and not burning(fc) then
+        pcall(function() fc:OwnerActorStartFire(-1, pc) end)
+        log("partner set " .. npc:GetFName():ToString() .. " on fire")
+    end
+end
+S.fireSeen = {}
+S.every(250, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    local now = {}
+    for _, n in ipairs(S.allOf(NPC_CLASS)) do
+        pcall(function()
+            local fc = n.FireComponent
+            if valid(fc) and burning(fc) and not n.bIsDead then
+                local key = n:GetFullName()
+                now[key] = true
+                if not S.fireSeen[key] then S.toClients("FV", fmtVec(n:K2_GetActorLocation())) end
+            end
+        end)
+    end
+    S.fireSeen = now
+end)
+handlers.client["FV"] = function(_, p)
+    local npc = nearestNPC(vec(p, 1), 300)
+    if not valid(npc) then return end
+    local fc = npc.FireComponent
+    if valid(fc) and not burning(fc) then
+        S.fireHost[npc:GetFullName()] = true
+        fc.BurnDamageOtherAmountPlayer, fc.BurnDamageOtherAmount = 0, 0
+        pcall(function() fc:OwnerActorStartFire(-1, nil) end)
+    end
+end
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.7.3 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.7.4 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -38,16 +38,20 @@ reloads from the last checkpoint with the server on) and the friend joins. Where
 (mission start, next level, checkpoint, restart) friends follow automatically. Story triggers are shared,
 enemy squads come from the host, everyone down = back to the last checkpoint. Since v0.7 cutscenes play for
 everyone at the same time (and wait until every player has come to where they start - "waiting for players k/n"), radio/dialogue lines with subtitles are heard by all, and doors the host's story
-unlocks are unlocked for everyone.
+unlocks are unlocked for everyone. Since v0.7.4 anything used with the interact key (terminals, buttons,
+levers, elevators, scripted scenes like the cultists' heavy doors) is shared - a partner pressing F moves
+the story for everyone - and story objective markers show for every player.
 
 ## Features
 - Each player plays their own full character; enemies, waves and money run on the host.
 - Shots, damage (incl. headshots) and enemy deaths synced both ways; enemies hurt both players.
 - Horde HUD for the partner; down & revive instead of death; auto-reconnect after an arena restart.
 - Partner picks up dropped / bought weapons; partner kills earn Horde money; partner markers; 3+ players.
+- Human shields: a partner can grab an enemy (hold it, let it go, throw it) and everyone sees it.
+- Partner fire (incendiary rounds, molotovs) burns the real enemies; burning enemies burn for everyone.
 
 ## Known issues
-See [docs/releases](docs/releases). Campaign co-op is early: cutscenes and some scripted scenes are not synced yet.
+See [docs/releases](docs/releases). Campaign co-op is early: bosses and some special scenes are not synced yet.
 
 ## For developers
 `mod/T2Coop/Scripts/main.lua` is the whole mod. `MODLOG.md` documents every engine finding,

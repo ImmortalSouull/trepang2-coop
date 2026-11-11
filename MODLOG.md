@@ -305,6 +305,26 @@
     Оставляем тик только у своей пешки (у чужих выключаем и чистим `PointDamageIndicators`).
 50. **Костюм хоста утекал клиенту** (bReplicates=false до Finish не помог) → `bOnlyRelevantToOwner=true`.
     **Не править main.lua через PowerShell Get-Content/Set-Content** — читает UTF-8 как cp1250, ломает русские строки.
+51. **Взаимодействия (клавиша F)** — `UBaseInteractableComponent` (`bAllowInteraction`, `InteractDuration`,
+    `bIsCountingDownDuration`, `RemainingDuration`, `Interact(instigator)`, Enable/DisableInteraction). Игра зовёт
+    их нативно: хуки Lua на `BasePlayer:Interact`/`BPOnInteract`/`Interact` компонента НЕ срабатывают от нажатия.
+    Поэтому опрос своей пешки: `pawn.InteractableComp` = объект в фокусе. Мгновенный (dur ≤ 0) срабатывает на
+    нажатии F, и к нашему тику фокус уже пуст, а подобранный предмет уничтожен → запоминаем имена объекта в
+    фокусе прошлого тика. Долгий — видим отсчёт (`RemainingDuration` до ~0). Выполнить объект сразу из Lua:
+    `InteractDuration=-1` на время вызова `Interact(кто)`. Сцены `BP_PlayerInteraction_C` (тяжёлые двери
+    культистов) хост проигрывает марионеткой напарника — камера/ввод хоста не трогаются, сюжет идёт.
+    `ExecuteInteractionSequence(pawn)` тоже запускает сцену. Сообщения IA (клиент→хост), IX, IE (вкл/выкл).
+    Личное (интел, коллекционное, подборы, ящики, двери, убежище) не синхронизируется.
+52. **Метки задач** — `BP_ObjectiveIcon_C` уровня (имена одинаковые), `IconActive`, `Sickle_ShowIcon/HideIcon`,
+    тексты `Localized Text 1/2` (классы) → `Override Icon Text`. Сообщение OB. Свои иконки мода — `S.modIcons`.
+53. **Заложники (живой щит)** — `BasePlayer.MyHostage/bHasAHostage`, `TakeHostage(npc)`, `ReleaseHostage`,
+    `ThrowHostage`; NPC `bIsAHostage`, `StartBeingHostage(holder)/StopBeingHostage`. Марионетка на хосте берёт
+    настоящего врага (HG/HR); бросок отличаем по смещению врага через 0.4 с. Имена NPC у хоста и клиента разные.
+54. **Огонь** — `NPC.FireComponent` (`OwnerActorStartFire(-1, instigator)`; с 0 не горит). Поле `IsOnFire` из Lua
+    читается false даже когда горит → `GetRemainingBurnDuration(out)`. Либа `/Game/Blueprint/Entity/Fire/BP_FireLib`.
+    Сообщения FI (клиент→хост), FV (хост→клиенты, для вида). Копии у клиента никого не обжигают.
+55. **Счётчик врагов «Орды» у клиента был 0** — post-хук на Tick виджета не срабатывает (BP), Tick пишет 0 каждый
+    кадр. Подменили переменную `EnemiesTextBox` на запасной TextBlock (Tick пишет в него), видимый держим сами.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).
@@ -320,6 +340,8 @@
 - `NM|ник` клиент→хост (раз в 3 c): имя игрока; хост объявляет «X joined / X left».
 - `AS|...` клиент→хост и `AS|pid|...` хост→клиенты: состояние анимации игрока. `HF|pid|n` хост→клиенты: чужой выстрел.
 - `TR|имя|n` хост→клиенты: сработал сюжетный триггер. `MI|класс` хост→клиент: текущая миссия.
+- `IA|объект|комп` клиент→хост, `IX|объект|комп` / `IE|объект|комп|1/0` / `OB|имя|1/0|xyz|t1|t2|подпись` хост→клиенты.
+- `HG|xyz` / `HR|бросок` клиент→хост (заложник), `HH|xyz|xyz` / `HE|xyz` хост→клиенты. `FI|xyz` клиент→хост, `FV|xyz` хост→клиенты (огонь).
 - `DN|1/0` клиент→хост: ранен/поднят. `RV` хост→клиент: тебя подняли. `RJ` хост→клиенты: арена перезапускается.
 
 ## Статус 2026-11-10 07:00 — v0.4.0

@@ -48,3 +48,5 @@ Talk to the user in Russian. The user plays with a friend; previous project: ZER
   `docs/releases/vX.Y.Z.md`, asset = `dist/Trepang2-Coop-vX.Y.Z.zip` from `tools/build_dist.ps1`.
   Bump `local VERSION` in main.lua and the version in README.md first.
 - Near v1.0.0 (once it's more playable) make a showcase video, like the ZERO Sievert mod had.
+- After each batch of new mechanics / bug fixes: update ALL GitHub info (README, repo description, release
+  notes) and give the user a fresh full Nexus description (`docs/nexus.md` + `nexus_upload/description_bbcode.txt`).

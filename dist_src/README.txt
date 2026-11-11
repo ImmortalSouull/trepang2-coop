@@ -41,6 +41,8 @@ joins. Wherever the host goes (mission start, next level, checkpoint, restart) f
 If everyone is down, the group goes back to the last checkpoint. Cutscenes wait until every player has come
 to where they start ("WAITING FOR PLAYERS 1/2" at the top of the screen, a marker on the spot), then play
 for everyone at the same time, radio/dialogue lines and subtitles are shared, doors the story unlocks open for everyone.
+Terminals, buttons, levers and scripted scenes (key F) used by anyone count for everyone; objective
+markers show for all players. A partner can grab an enemy as a human shield; partner fire burns enemies.
 
 SETTINGS
 --------

@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.7.2
+0.7.4
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -26,6 +26,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]Cutscenes for everyone[/b]: a cutscene waits until every player has come to where it starts ("WAITING FOR PLAYERS 1/2" at the top of the screen and a "GATHER HERE" marker), then plays for all players at the same moment. Partners are not written into the scene; afterwards everyone continues together.
 [*][b]Radio and dialogue[/b] lines with the speaker's portrait and subtitles are heard by all.
 [*][b]Story events are shared[/b]: objectives, doors, scripted triggers - a friend walking into a trigger sets it off for everyone. Doors the story locks or unlocks match on every machine.
+[*][b]Interactions are shared[/b]: terminals, buttons, levers, elevators and scripted scenes (like forcing the cultists' heavy doors) - whoever presses F, the story moves for everyone, and things the story switches on or off match for all players.
+[*][b]Objective markers[/b] the story shows ("find the Enforcer", distance through walls) appear for every player.
 [*]Enemy squads come from the host and are the same for everybody.
 [*]Checkpoints are saved by the host only - friends' own campaign saves are left alone.
 [*][b]Down & revive[/b]: drop below 30% HP and you go down; a partner standing next to you revives you. If everyone is down, the group goes back to the last checkpoint.
@@ -37,6 +39,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*]Enemies, waves and money run on the host; the Horde HUD (wave, enemies left, money, timer) for everyone.
 [*]Partner bullets, shotgun pellets, headshots, grenades, kicks, dropkicks, melee strikes and sword hurt enemies; partner kills earn Horde money.
 [*]Guns dropped by enemies or bought by the host can be picked up by anyone.
+[*][b]Human shields[/b]: a partner can grab an enemy, hold it, let it go or throw it - the real enemy follows, everyone sees it.
+[*][b]Fire[/b]: a partner's incendiary rounds and molotovs set the real enemies on fire; burning enemies burn on every screen.
 [*]Down & revive; if everyone is down the arena restarts and everyone reconnects automatically.
 [/list]
 
@@ -70,10 +74,9 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
-[*]Campaign: hostages, terminals / hacking, objective markers set by the story and elevators are not synced yet.
+[*]Campaign: bosses and some special scenes are not synced yet; elevators are shared through their buttons but not tested on every level yet.
 [*]After a level change friends reconnect in about 30-40 seconds while the level loads.
 [*]Partners' reload and ground melee strike are not shown on their body; dual wielding shows both guns but with a two-handed pose.
-[*]Fire / incendiary damage from the partner is not counted yet.
 [*]Ammo and health pickups are separate for each player.
 [*]Steam mode is not yet tested between two different Steam accounts; players on a non-Steam copy can only use IP mode.
 [*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
@@ -81,7 +84,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Roadmap[/b][/size]
 [list]
-[*][b]v0.7.x[/b] - hostages, terminals and hacking, objective markers, elevators
+[*][b]v0.7.4[/b] - done: interactions (terminals, buttons, scenes), objective markers, human shields, partner fire
 [*][b]v0.8[/b] - bosses, special levels, side missions, difficulty for more players
 [*][b]v0.9[/b] - progression for every player, spectating while down, rejoining, a full campaign run together
 [*][b]v1.0[/b] - the whole Trepang2 campaign + Horde playable in co-op

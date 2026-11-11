@@ -366,6 +366,11 @@
     задаём копиям. Карты: Mothman/Version_01/KillMothman_Persistent, Horizon/KillHorizon_Persistent,
     SafeHouse/Story/Cutscene/Safehouse_Betrayal_Sequence/Safehouse_Betrayal_Persistent, Credits/Credits_Persistent —
     все заходят вдвоём. Скрипт: scratchpad mothtest.ps1 -Off "ob,obl".
+66. **Prologue: хост падал при входе гостя (v0.8.2–0.8.3)** — блок снаряжения/противогаза: `classPath(hp.CurrentWeapon)`,
+    а в начале Prologue у хоста нет оружия → нативное падение в UE4SS (чтение 0x10), pcall не ловит. Всегда
+    `valid(w)` перед GetClass. Плюс: к марионетке и своей пешке обращаемся не раньше 5 с после появления / при
+    controllerReady; снимать противогаз, которого не было, не зовём. Выключатели хоста: mothtest.ps1 -OffA "gm".
+    Случайное (1 раз из 2) зависание хоста при загрузке KillSyndicate — та же нестабильность, что в п. 36.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

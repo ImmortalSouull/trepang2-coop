@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.8.3"
+local VERSION = "0.8.4"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -246,7 +246,8 @@ local function setupRemotePlayers()
                 S.known[key] = true
                 S.spawnIndex = S.spawnIndex + 1
                 local hr = host.Pawn:K2_GetActorRotation()
-                local spot = S.freeSpotNear(host.Pawn, S.spawnIndex)
+                local spot = S.off.spot and nil or S.freeSpotNear(host.Pawn, S.spawnIndex)
+                if not spot then local hl = host.Pawn:K2_GetActorLocation(); spot = { X = hl.X + 120, Y = hl.Y, Z = hl.Z + 20 } end
                 pawn:K2_SetActorLocation(spot, false, {}, true)
                 pcall(function() pc:ClientSetRotation(hr, false) end)
                 S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", spot.X, spot.Y, spot.Z), string.format("%.1f", hr.Yaw))
@@ -4097,7 +4098,7 @@ end)
 do
 S.lwSent, S.gmSent = {}, {}
 S.every(500, function()
-    if not S.hosting or not netDriver() then return end
+    if not S.hosting or not netDriver() or S.off.gm then return end
     local hpc = localPC()
     local hp = valid(hpc) and hpc.Pawn or nil
     if not valid(hp) then return end
@@ -4106,18 +4107,26 @@ S.every(500, function()
     for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
         if valid(pc) and not pc:IsLocalController() and valid(pc.Pawn) then
             local key = pc:GetFullName()
-            if not horde and not S.lwSent[key] then
+            -- not on a body that just appeared (calling into it then crashed the host on Prologue)
+            S.lwFirst = S.lwFirst or {}
+            S.lwFirst[key] = S.lwFirst[key] or os.clock()
+            if os.clock() - S.lwFirst[key] < 5 then goto continue end
+            -- (Prologue starts unarmed: never touch an empty weapon pointer, that crashed the host)
+            local w = hp.CurrentWeapon
+            if not horde and not S.lwSent[key] and valid(w) then
                 S.lwSent[key] = true
-                pcall(function() S.toClient(pc, "LW", classPath(hp.CurrentWeapon)) end)
+                pcall(function() S.toClient(pc, "LW", classPath(w)) end)
             end
             if S.gmSent[key] ~= mask then
+                local had = S.gmSent[key]
                 S.gmSent[key] = mask
                 S.toClient(pc, "GM", mask and 1 or 0)
-                pcall(function()
+                if mask or had ~= nil then pcall(function()
                     if mask then pc.Pawn:StartWearingGasMask(true) else pc.Pawn:StopWearingGasMask(true) end
-                end)
+                end) end
             end
         end
+        ::continue::
     end
 end)
 
@@ -4144,7 +4153,7 @@ S.every(500, function()
 end)
 handlers.client["GM"] = function(_, p)
     local pawn = S.client and S.client.pawn
-    if not valid(pawn) then S.gmWant = p[1] == "1" return end
+    if not valid(pawn) or not controllerReady(pawn) then S.gmWant = p[1] == "1" return end
     local on = p[1] == "1"
     if (pawn.bIsWearingGasMask and true or false) ~= on then
         pcall(function() if on then pawn:StartWearingGasMask(false) else pawn:StopWearingGasMask(false) end end)

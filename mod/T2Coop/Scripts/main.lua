@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.8.2"
+local VERSION = "0.8.3"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -27,6 +27,7 @@ local TICK_MS = 30
 local tasks = {}
 function S.every(ms, fn) table.insert(tasks, { iv = ms, acc = ms, fn = fn }) end
 local running = false
+S.off = {}          -- dev: switch single features off (S.off.fire = true ...)
 S.graceMs = 0       -- no tasks while a map loads (old world torn down) and briefly after
 local function runTasks(dtMs)
     if running then return end   -- never re-enter (game calls made by a task can tick hooks)
@@ -791,7 +792,7 @@ S.every(100, function()
     -- the widget's Tick writes "enemies left: 0" (this machine's empty game state) into
     -- EnemiesTextBox every frame: point that variable at a spare text block nobody sees and
     -- keep the visible one for the host's value
-    if c.enemiesFor ~= ui:GetFullName() then
+    if c.enemiesFor ~= ui:GetFullName() and not S.off.hud then
         pcall(function()
             local real = ui.EnemiesTextBox
             local spare = StaticConstructObject(StaticFindObject("/Script/UMG.TextBlock"), ui, FName("T2CSpareEnemies", EFindName.FNAME_Add))
@@ -3449,7 +3450,7 @@ S.interacted = function(c) interacted(compInfo(c)) end
 local ia = { cur = nil, hold = nil, keyWas = false }
 local INTERACT_KEYS
 S.every(0, function()
-    if not (S.hosting or S.joined) or not netDriver() then return end
+    if not (S.hosting or S.joined) or not netDriver() or S.off.ia then return end
     local pawn, pc = myPawn(), localPC()
     if not valid(pawn) or not valid(pc) then return end
     INTERACT_KEYS = INTERACT_KEYS or {
@@ -3547,7 +3548,7 @@ handlers.client["IE"] = function(_, p)
     S.ieHost[p[1] .. "|" .. p[2]] = p[3] == "1"
 end
 S.every(500, function()
-    if not S.joined or not netDriver() or next(S.ieHost) == nil then return end
+    if not S.joined or not netDriver() or next(S.ieHost) == nil or S.off.ie then return end
     for _, e in ipairs(sharedComps()) do
         local want = S.ieHost[e.owner .. "|" .. e.name]
         if want ~= nil and e.c.bAllowInteraction ~= want then
@@ -3615,8 +3616,8 @@ end
 S.obHost = {}   -- client: host icon name -> { act, own = our spawned copy or nil }
 local function textClass(path)
     if not path or path == "" then return nil end
+    -- loaded classes only: LoadAsset here (mid map load on a client) hung the game on KillMothman
     local c = StaticFindObject(path)
-    if not valid(c) and LoadAsset then pcall(function() c = LoadAsset(path) end) end
     return valid(c) and c or nil
 end
 local function localIcon(name)
@@ -3626,7 +3627,27 @@ local function localIcon(name)
         if x:GetFName():ToString() == name and not S.modIcons[x:GetFullName()] then return x end
     end
 end
+-- Queued, applied a few seconds after our pawn is ready: spawning an icon while the client was
+-- still setting up (and its sublevel not streamed in yet) crashed the game on KillMothman.
+S.obPending = {}
 handlers.client["OB"] = function(_, p)
+    if S.off.ob then return end
+    local old = S.obPending[p[1]]
+    S.obPending[p[1]] = { p = p, since = old and old.since or os.clock() }
+end
+S.every(500, function()
+    if not S.joined or not netDriver() or next(S.obPending) == nil then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or not controllerReady(pawn) then S.obReadyAt = nil return end
+    S.obReadyAt = S.obReadyAt or (os.clock() + 3)
+    if os.clock() < S.obReadyAt then return end
+    for name, e in pairs(S.obPending) do
+        local ok, done = pcall(S.obApply, e.p, os.clock() - e.since > 5)
+        if not ok or done ~= false then S.obPending[name] = nil end
+    end
+end)
+-- returns false to try again later (no copy of the icon here yet)
+function S.obApply(p, mayCreate)
     local name, act, loc = p[1], p[2] == "1", vec(p, 3)
     local t1, t2, sub = p[6], p[7], p[8]
     local e = S.obHost[name] or {}
@@ -3635,15 +3656,17 @@ handlers.client["OB"] = function(_, p)
     local a = localIcon(name)
     if not valid(a) then
         if not act then return end
+        if not mayCreate then return false end
         pcall(function()
             local cls = classOf(ICON_CLASS)
-            if not valid(cls) and LoadAsset then cls = LoadAsset(ICON_CLASS) end
+            if not valid(cls) then return end
             a = world():SpawnActor(cls, loc, { Pitch = 0, Yaw = 0, Roll = 0 })
             a.OwningPlayer = localPC()
             e.own = a
         end)
         if not valid(a) then return end
     end
+    if not valid(a.OwningPlayer) then pcall(function() a.OwningPlayer = localPC() end) end
     local c1, c2 = textClass(t1), textClass(t2)
     local o1, o2 = iconInfo(a)
     if (c1 or c2) and (o1 ~= t1 or o2 ~= t2) then
@@ -3660,7 +3683,7 @@ end
 -- client: our own copies follow the host only (our level scripts mostly don't run, but replayed
 -- triggers can still switch one on)
 S.every(1000, function()
-    if not S.joined or not netDriver() then return end
+    if not S.joined or not netDriver() or S.off.obl then return end
     for _, a in ipairs(S.allOf(ICON_CLASS)) do
         if not S.modIcons[a:GetFullName()] and a.IconActive then
             local e = S.obHost[a:GetFName():ToString()]
@@ -3688,7 +3711,7 @@ do
 local NPC_CLASS = "/Game/Blueprint/AI/BaseNPC.BaseNPC_C"
 local hg = { has = false }
 S.every(100, function()
-    if not S.joined or not netDriver() then return end
+    if not S.joined or not netDriver() or S.off.hg then return end
     local pawn = S.client and S.client.pawn
     if not valid(pawn) then return end
     local h = pawn.MyHostage
@@ -3816,7 +3839,7 @@ end
 S.burning = burning
 S.fireOwn, S.fireHost = {}, {}
 S.every(250, function()
-    if not S.joined or not netDriver() then return end
+    if not S.joined or not netDriver() or S.off.fire then return end
     for _, n in ipairs(S.allOf(NPC_CLASS)) do
         pcall(function()
             local fc = n.FireComponent

@@ -358,6 +358,14 @@
     оружие клиенту НЕ дают — только настоящее удержание F. Поэтому хост шлёт `LW|класс` (не в «Орде»), клиент кладёт
     такое оружие под ноги + уведомление. Противогаз: `bIsWearingGasMask`, `Start/StopWearingGasMask(bInstant)`;
     хост → `GM|1/0` всем и надевает на марионеток. Путь карты: /Game/Maps/Campaign/Ghosts/KillGhosts_Persistent.
+65. **KillMothman: клиент падал/зависал при входе (с v0.7.4)** — поиск выключателями `T2C.off.<имя>` (fire, ie, ob, obl,
+    hg, ia, hud) до подключения: виновата синхронизация меток (OB). (1) `LoadAsset` классов текста метки во время
+    загрузки карты — зависание; теперь только StaticFindObject. (2) SpawnActor своей метки, пока подуровень с копией
+    ещё не подгружен и клиент только настраивается, — падение (запись по 0x8 в хуке UE4SS). Теперь OB копятся и
+    применяются через 3 с после готовности пешки; свою метку создаём, только если копии нет 5 с. OwningPlayer
+    задаём копиям. Карты: Mothman/Version_01/KillMothman_Persistent, Horizon/KillHorizon_Persistent,
+    SafeHouse/Story/Cutscene/Safehouse_Betrayal_Sequence/Safehouse_Betrayal_Persistent, Credits/Credits_Persistent —
+    все заходят вдвоём. Скрипт: scratchpad mothtest.ps1 -Off "ob,obl".
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

@@ -89,7 +89,8 @@ KillCultists, KillGhosts, KillSyndicate, KillHorizon, KillMothman, Safehouse_Bet
 - Разведка: боссы = HVT, классы `/Game/Blueprint/HVT/**/NPC_HVT_*` (Walter, Charon, Tachenko, Chet, Derrick,
   Chronos, Hellfire, Biohacker, BOPE, Medic, Convict, HECU Leader, Demoman, BlueSky, Imposter, Kramer, Spetsnaz...),
   описание `HVT_*_C` (BP_HVTInfo). Сайд-миссии — карты `/Game/Maps/SideMissions/**`.
-  Следующий шаг: полоса здоровья босса у клиента (UI босса создаёт GameMode хоста), особые механики боссов
+  ✅ v0.8.0: полоса здоровья босса у клиента, ENEMY HEALTH в F4, HUD гостя, дуги попаданий.
+  Дальше: (UI босса создаёт GameMode хоста), особые механики боссов
   (Chronos — двойники-приманки), проверка хоста сайд-миссии через F4.
 - ✅ v0.7.6: сложность под число игроков (enemy_hp, +50% здоровья за игрока).
 - KillHorizon, KillMothman, Safehouse_Betrayal, финал и титры.

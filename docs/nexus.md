@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.7.6
+0.8.0
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -29,7 +29,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]Interactions are shared[/b]: terminals, buttons, levers, elevators and scripted scenes (like forcing the cultists' heavy doors) - whoever presses F, the story moves for everyone, and things the story switches on or off match for all players.
 [*][b]Objective markers[/b] the story shows ("find the Enforcer", distance through walls) appear for every player.
 [*]Enemy squads come from the host and are the same for everybody.
-[*][b]Tougher enemies for more players[/b]: +50% health for every extra player (campaign and Horde; the host can change it: enemy_hp in config.txt, 0 = off).
+[*][b]Boss health bars[/b] show for every player, not just the host.
+[*][b]Tougher enemies for more players[/b]: +50% health for every extra player (campaign and Horde). The host picks it in the F4 menu - ENEMY HEALTH: from +0% to +200% per extra player.
 [*]Checkpoints are saved by the host only - friends' own campaign saves are left alone.
 [*][b]Down & revive[/b]: drop below 30% HP and you go down; a partner standing next to you revives you. If everyone is down, the group goes back to the last checkpoint.
 [/list]
@@ -70,7 +71,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Controls[/b][/size]
 [list]
-[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look. Everything is there - no other keys.
+[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look, enemy health. Everything is there - no other keys.
 [/list]
 
 [size=4][b]Known issues (beta)[/b][/size]
@@ -86,7 +87,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [size=4][b]Roadmap[/b][/size]
 [list]
 [*][b]v0.7.4[/b] - done: interactions (terminals, buttons, scenes), objective markers, human shields, partner fire
-[*][b]v0.8[/b] - bosses, special levels, side missions (difficulty for more players is in since v0.7.6)
+[*][b]v0.8.0[/b] - done: boss health bars for all, enemy health setting in the menu
+[*][b]v0.8.x[/b] - bosses' special mechanics, special levels, side missions
 [*][b]v0.9[/b] - progression for every player, spectating while down, rejoining, a full campaign run together
 [*][b]v1.0[/b] - the whole Trepang2 campaign + Horde playable in co-op
 [/list]

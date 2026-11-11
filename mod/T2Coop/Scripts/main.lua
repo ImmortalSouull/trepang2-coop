@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.6"
+local VERSION = "0.8.0"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1201,7 +1201,20 @@ S.every(0, function()
                 local lost = S.puppetSeen[key] and (PUPPET_HP - p.Health) or 0   -- first sight: just top up
                 S.puppetSeen[key] = true
                 if lost > 0.5 and lost < PUPPET_HP then
-                    S.toClient(pc, "H", string.format("%.1f", lost))
+                    -- who hit it: the enemy near it that fired last (for the hit arc on the partner's screen)
+                    local from = "0|0|0"
+                    pcall(function()
+                        local pl, best, bt = p:K2_GetActorLocation(), nil, -1
+                        for _, n in ipairs(S.allOf("/Game/Blueprint/AI/BaseNPC.BaseNPC_C")) do
+                            if not n.bIsDead then
+                                local t = tonumber(n.LastTimeFiredWeapon) or -1
+                                if t > bt and dist2(n:K2_GetActorLocation(), pl) < 5000 * 5000 then best, bt = n, t end
+                            end
+                        end
+                        if not best or bt <= 0 then best = nearestNPC(pl, 5000) end   -- melee: the closest one
+                        if best then from = fmtVec(best:K2_GetActorLocation()) end
+                    end)
+                    S.toClient(pc, "H", string.format("%.1f", lost), from)
                     S.puppetDamage = S.puppetDamage + lost
                 end
                 if p.Health ~= PUPPET_HP then p.Health = PUPPET_HP end
@@ -1215,6 +1228,15 @@ handlers.client["H"] = function(_, p)
     local dmg = tonumber(p[1]) or 0
     if not valid(pawn) or dmg <= 0 or pawn.bInvulnerable then return end
     pawn.Health = pawn.Health - dmg
+    local from = vec(p, 2)
+    if from.X and (from.X ~= 0 or from.Y ~= 0) then
+        S.stats.hitArcs = (S.stats.hitArcs or 0) + 1
+        -- (it draws nothing without the enemy: take our copy of the one that fired)
+        local npc = nearestNPC(from, 400)
+        if valid(npc) then
+            pcall(function() pawn.BP_CircleDamageIndicatorComponent:AddIndicator(npc:K2_GetActorLocation(), npc, nil) end)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -3816,6 +3838,174 @@ handlers.client["FV"] = function(_, p)
         fc.BurnDamageOtherAmountPlayer, fc.BurnDamageOtherAmount = 0, 0
         pcall(function() fc:OwnerActorStartFire(-1, nil) end)
     end
+end
+end
+
+---------------------------------------------------------------------------
+-- Boss health bars (UI_BossHealthBar_C: Character, BossName, Stages). The host's game creates them
+-- (story bosses, HVTs); a client's copy of the boss never does. Host -> clients
+-- "BB|1|x|y|z|stages|name|widget class" when one shows, "BB|0|x|y|z" when it's gone. The client makes
+-- the same widget for its copy of the boss (whose health comes from the host) and refreshes it.
+---------------------------------------------------------------------------
+do
+S.bbSeen = {}
+S.every(250, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    local now = {}
+    for _, w in ipairs(FindAllOf("UI_BossHealthBar_C") or {}) do
+        pcall(function()
+            local c = w.Character
+            if valid(c) and w:IsInViewport() then
+                local key = w:GetFullName()
+                local l = c:K2_GetActorLocation()
+                now[key] = l
+                -- bosses get more health with more players (enemy_hp): let the bar's max follow
+                local h = tonumber(c.Health) or 0
+                if not S.bbSeen[key] and h > (tonumber(w.MaxHealth) or 0) then w.MaxHealth = h end
+                if not S.bbSeen[key] then
+                    local name = ""
+                    pcall(function() name = (w.BossName:ToString():gsub("|", "/")) end)
+                    S.toClients("BB", 1, fmtVec(l), tonumber(w.Stages) or 1, name, classPath(w))
+                    log("boss bar: " .. name)
+                end
+            end
+        end)
+    end
+    for key, l in pairs(S.bbSeen) do
+        if not now[key] then S.toClients("BB", 0, fmtVec(l)) end
+    end
+    S.bbSeen = now
+end)
+
+S.bars = {}   -- client: { w = widget, npc = boss copy }
+handlers.client["BB"] = function(_, p)
+    local on, loc = p[1] == "1", vec(p, 2)
+    if not on then
+        for i = #S.bars, 1, -1 do
+            local b = S.bars[i]
+            if not valid(b.npc) or dist2(b.npc:K2_GetActorLocation(), loc) < 800 * 800 then
+                pcall(function() b.w:RemoveFromParent() end)
+                table.remove(S.bars, i)
+            end
+        end
+        return
+    end
+    local npc = nearestNPC(loc, 600)
+    if not valid(npc) then log("boss bar: no boss copy near") return end
+    for _, b in ipairs(S.bars) do
+        if valid(b.npc) and b.npc:GetFullName() == npc:GetFullName() then return end
+    end
+    local path = p[7]
+    local cls = StaticFindObject(path)
+    if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(path) end) end
+    if not valid(cls) then log("boss bar: no class " .. tostring(path)) return end
+    local WBL = StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary")
+    local w = WBL:Create(world(), cls, localPC())
+    if not valid(w) then return end
+    w.Character = npc
+    pcall(function() w.BossName = FText(p[6] or "") end)
+    pcall(function() w.BossNameText:SetText(FText(p[6] or "")) end)
+    pcall(function() w:SetBossStages(tonumber(p[5]) or 1) end)
+    w:AddToViewport(0)
+    pcall(function() w:SetupHealthBar() end)
+    pcall(function() w:FadeInBar() end)
+    table.insert(S.bars, { w = w, npc = npc, max = math.max(tonumber(npc.Health) or 0, tonumber(w.MaxHealth) or 0) })
+    log("boss bar shown: " .. tostring(p[6]))
+end
+S.every(200, function()
+    if not S.joined or #S.bars == 0 then return end
+    for i = #S.bars, 1, -1 do
+        local b = S.bars[i]
+        if not valid(b.w) then
+            table.remove(S.bars, i)
+        elseif not valid(b.npc) then
+            pcall(function() b.w:RemoveFromParent() end)
+            table.remove(S.bars, i)
+        else
+            -- the widget only follows damage events, which a copy never gets: feed it the health
+            pcall(function()
+                b.w.MaxHealth = b.max
+                b.w.Health = math.max(tonumber(b.npc.Health) or 0, 0)
+                b.w:UpdateBar()
+            end)
+        end
+    end
+end)
+end
+
+---------------------------------------------------------------------------
+-- Client HUD: the visible PlayerHUD2 sometimes stays bound to the server's pawn (white health bar,
+-- ammo that never goes down). Keep every HUD on screen bound to our own pawn.
+-- Indicator circles (damage / detection) sit on EVERY PlayerBP and draw on our screen: a partner's
+-- body drew its hits on the host (twice). On other players' bodies they're cleared all the time;
+-- the host passes the partner's hits on ("DI|from x|y|z") and the partner draws them itself.
+---------------------------------------------------------------------------
+do
+S.every(1000, function()
+    if not S.joined then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) then return end
+    for _, h in ipairs(FindAllOf("PlayerHUD2_C") or {}) do
+        pcall(function()
+            if h:IsInViewport() and (not valid(h.Player) or h.Player:GetFullName() ~= pawn:GetFullName()) then
+                h.Player = pawn
+                pawn.PlayerHud = h
+                log("HUD bound to our pawn")
+            end
+        end)
+    end
+end)
+
+local function drain(comp, onEach)
+    local arr = comp.PointDamageIndicators
+    local n = 0
+    pcall(function() n = arr:GetArrayNum() end)
+    if n == 0 then return end
+    -- (entries can be null: read each one on its own)
+    local list = {}
+    for i = 1, n do
+        pcall(function()
+            local w = arr[i]
+            w = (type(w) == "userdata" and w.get) and w:get() or w
+            if valid(w) then table.insert(list, w) end
+        end)
+    end
+    for _, w in ipairs(list) do
+        if onEach then pcall(onEach, w) end
+        pcall(function() w:RemoveFromParent() end)
+    end
+    pcall(function() comp.PointDamageIndicators:Empty() end)
+end
+
+S.every(100, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local mine = S.joined and S.client and S.client.pawn
+    if not S.joined then local pc = localPC(); mine = valid(pc) and pc.Pawn or nil end
+    if not valid(mine) then return end
+    local myName = mine:GetFullName()
+    local owners = {}
+    if S.hosting then
+        for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+            if valid(pc) and not pc:IsLocalController() and valid(pc.Pawn) then owners[pc.Pawn:GetFullName()] = pc end
+        end
+    end
+    for _, p in ipairs(S.allOf("/Game/Blueprint/Player/PlayerBP.PlayerBP_C")) do
+        if p:GetFullName() ~= myName then
+            local owner = owners[p:GetFullName()]
+            local dmg = p.BP_CircleDamageIndicatorComponent
+            if valid(dmg) then
+                drain(dmg)
+            end
+            local det = p.BP_CircleDetectionIndicator
+            if valid(det) then drain(det) end
+        end
+    end
+end)
+handlers.client["DI"] = function(_, p)
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) then return end
+    S.stats.hitArcs = (S.stats.hitArcs or 0) + 1
+    pcall(function() pawn.BP_CircleDamageIndicatorComponent:AddIndicator(vec(p, 1), nil, nil) end)
 end
 end
 

@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.7.6 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.8.0 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -20,7 +20,7 @@ Notes for every version are in [docs/releases](docs/releases).
 ## Play
 Everything is in one menu: press **F4** (main menu or in a level).
 HOST, NEXT ARENA (Horde), JOIN (type the address), LEAVE, players, network mode (IP / Steam),
-Steam invite, and LOOK - your look for the others (safehouse outfit or any of ~330 enemy variants
+Steam invite, ENEMY HEALTH (tougher enemies for more players), and LOOK - your look for the others (safehouse outfit or any of ~330 enemy variants
 in 30 factions) with a turning preview of it.
 
 Over the internet the host needs **UDP port 7777** open, or both players use Porthole / Radmin VPN / ZeroTier.
@@ -48,7 +48,8 @@ the story for everyone - and story objective markers show for every player.
 - Horde HUD for the partner; down & revive instead of death; auto-reconnect after an arena restart.
 - Partner picks up dropped / bought weapons; partner kills earn Horde money; partner markers; 3+ players.
 - Partners' reload, weapon melee strike, grenade throw and weapon switch are shown on their body.
-- Tougher enemies for more players: +50% health per extra player (`enemy_hp=` in the host's config.txt, 0 = off).
+- Tougher enemies for more players: +0..200% health per extra player (F4 menu - ENEMY HEALTH, default +50%).
+- Boss health bars for every player.
 - Human shields: a partner can grab an enemy (hold it, let it go, throw it) and everyone sees it.
 - Partner fire (incendiary rounds, molotovs) burns the real enemies; burning enemies burn for everyone.
 

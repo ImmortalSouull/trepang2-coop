@@ -85,6 +85,12 @@ KillCultists, KillGhosts, KillSyndicate, KillHorizon, KillMothman, Safehouse_Bet
 - Цель версии: KillCultists, KillGhosts, KillSyndicate проходятся целиком.
 
 ## v0.8.0 — кампания: особые уровни и боссы
+- ✅ (к выпуску в 0.8.0, не отдельной версией) настройка здоровья врагов в меню F4 (ENEMY HEALTH < >).
+- Разведка: боссы = HVT, классы `/Game/Blueprint/HVT/**/NPC_HVT_*` (Walter, Charon, Tachenko, Chet, Derrick,
+  Chronos, Hellfire, Biohacker, BOPE, Medic, Convict, HECU Leader, Demoman, BlueSky, Imposter, Kramer, Spetsnaz...),
+  описание `HVT_*_C` (BP_HVTInfo). Сайд-миссии — карты `/Game/Maps/SideMissions/**`.
+  Следующий шаг: полоса здоровья босса у клиента (UI босса создаёт GameMode хоста), особые механики боссов
+  (Chronos — двойники-приманки), проверка хоста сайд-миссии через F4.
 - ✅ v0.7.6: сложность под число игроков (enemy_hp, +50% здоровья за игрока).
 - KillHorizon, KillMothman, Safehouse_Betrayal, финал и титры.
 - Боссы и уникальные механики (погони, падения, «Backrooms», лифтовые сцены).

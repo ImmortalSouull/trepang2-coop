@@ -4199,6 +4199,15 @@ S.every(100, function()
         S.leave()
     elseif action == "netmode" then
         S.switchNetMode()
+    elseif action == "hpnext" or action == "hpprev" then
+        -- enemy health per extra player (used by the host)
+        local steps = { 0, 25, 50, 75, 100, 150, 200 }
+        local cur, idx = tonumber(cfg.enemy_hp) or 50, 1
+        for i, v in ipairs(steps) do if v <= cur then idx = i end end
+        idx = idx + (action == "hpnext" and 1 or -1)
+        if idx < 1 then idx = #steps elseif idx > #steps then idx = 1 end
+        cfg.enemy_hp = tostring(steps[idx])
+        saveConfig()
     elseif action == "menu" then
         S.menuToggle()
     elseif action == "nextlook" or action == "facnext" or action == "facprev" or action == "varnext" or action == "varprev" then
@@ -4345,7 +4354,7 @@ end)
 ---------------------------------------------------------------------------
 local menu = { open = false, n = 0, buttons = {} }
 local MENU_X, MENU_Y, MENU_W, MENU_SCALE = 60, 60, 760, 0.62
-local MENU_H = 1060   -- panel height incl. margins (widget units before scaling)
+local MENU_H = 1168   -- panel height incl. margins (widget units before scaling)
 
 local function mk(tree, cls, name)
     menu.n = menu.n + 1
@@ -4462,7 +4471,7 @@ local function buildMenu()
     menu.buttons = {}
     menu.slots = {}
     local W2 = (MENU_W - 10) / 2
-    panel(tree, root, -30, -24, MENU_W + 60, 1030)
+    panel(tree, root, -30, -24, MENU_W + 60, 1138)
     label(tree, root, "TREPANG2 CO-OP", 0, 0, "Title", 34, MENU_W - 130)
     label(tree, root, "v" .. VERSION, MENU_W - 110, 14, "Ver", 20, 110, true)
     box(tree, root, 0, 52, MENU_W, 2, 0.6, 0.6, 0.6, 0.45, "Line")
@@ -4499,6 +4508,10 @@ local function buildMenu()
     menu.varTile = button(tree, root, "", 74, 894, MENU_W - 148, "varnext")
     menu.varNext = button(tree, root, ">", MENU_W - 64, 894, 64, "varnext", nil, true)
     menu.lookHint = label(tree, root, "", 0, 962, "LookHint", 18, MENU_W, true)
+    section(tree, root, "ENEMY HEALTH", 996)
+    button(tree, root, "<", 0, 1034, 64, "hpprev", nil, true)
+    menu.hpTile = button(tree, root, "", 74, 1034, MENU_W - 148, "hpnext")
+    button(tree, root, ">", MENU_W - 64, 1034, 64, "hpnext", nil, true)
     -- look preview (left of the panel), same frame style
     panel(tree, root, -400, -24, 350, 620)
     menu.previewTitle = label(tree, root, "", -380, 0, "PreviewTitle", 24, 310)
@@ -4606,6 +4619,14 @@ local function refreshMenu()
     pcall(function() menu.previewTitle:SetText(FText(fi > 0 and (sk and sk.name or ""):upper() or "YOUR OUTFIT")) end)
     pcall(function() menu.previewSub:SetText(FText(fi > 0 and fname or "from the safehouse")) end)
     pcall(function() S.previewUpdate(menu.preview) end)
+    pcall(function()
+        local pct = tonumber(cfg.enemy_hp) or 0
+        local n = #(FindAllOf("PlayerController") or {})
+        local txt = pct <= 0 and "SAME FOR ANY NUMBER OF PLAYERS"
+            or string.format("+%d%% PER EXTRA PLAYER   (NOW x%.2g)", pct, 1 + math.max(n - 1, 0) * pct / 100)
+        if S.joined then txt = txt .. " - HOST DECIDES" end
+        menu.hpTile.t:SetText(FText(txt))
+    end)
     for i, slot in ipairs(menu.fslots or {}) do
         local h = hosts[i]
         pcall(function() slot.t:SetText(FText(h and h.name or "")) end)

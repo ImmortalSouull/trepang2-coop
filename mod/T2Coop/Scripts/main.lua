@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.0"
+local VERSION = "0.9.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -2944,6 +2944,7 @@ end)
 -- host -> a client that just arrived: the story so far, and the current mission
 function S.sendCampaignState(pc)
     pcall(S.sendInteractState, pc)
+    if S.sendProgress then pcall(S.sendProgress, pc) end
     for _, t in ipairs(S.allOf(TRIGGER_CLASS)) do
         if t.NumTimesTriggered > 0 then S.toClient(pc, "TR", t:GetFName():ToString(), t.NumTimesTriggered) end
     end
@@ -4210,6 +4211,100 @@ S.every(1000, function()
     local on = S.gmWant
     S.gmWant = nil
     pcall(function() if on then pawn:StartWearingGasMask(true) else pawn:StopWearingGasMask(true) end end)
+end)
+end
+
+---------------------------------------------------------------------------
+-- Campaign progress for partners. Missions finished and HVTs killed together are saved only in the
+-- host's Unlocks (GameInstance.UnlocksSaveObject: CompletedMissions {Mission, Difficulty}, KilledHVTs).
+-- Host -> clients "PG|M|mission class|difficulty" and "PG|H|hvt class": everything on joining and new
+-- entries when they appear. A client adds what it lacks (CompleteCurrentMission with that mission set
+-- as current / HVTKilled) and saves its Unlocks - a few seconds after its pawn is ready.
+---------------------------------------------------------------------------
+do
+local MF, DF = "Mission_4_7EA28D0040AFB8097BCF4889ED5885CF", "Difficulty_7_C28D9D48484BF1C47AE50F8F002D02D3"
+local function unlocks()
+    local gi = FindFirstOf("GameInstanceBP_C")
+    if not valid(gi) then return nil end
+    local u = gi.UnlocksSaveObject
+    return valid(u) and u or nil, gi
+end
+local function progressList()
+    local u = unlocks()
+    local list = {}
+    if not u then return list end
+    pcall(function()
+        for i = 1, u.CompletedMissions:GetArrayNum() do
+            local e = u.CompletedMissions[i]
+            local m = e[MF]
+            if valid(m) then table.insert(list, { "M", m:GetFullName():match("%s(.+)$"), tonumber(e[DF]) or 0 }) end
+        end
+    end)
+    pcall(function()
+        for i = 1, u.KilledHVTs:GetArrayNum() do
+            local h = u.KilledHVTs[i]   -- (a UClass, not a wrapper)
+            if valid(h) then table.insert(list, { "H", h:GetFullName():match("%s(.+)$"), 0 }) end
+        end
+    end)
+    return list
+end
+function S.sendProgress(pc)
+    for _, e in ipairs(progressList()) do
+        if pc then S.toClient(pc, "PG", e[1], e[2], e[3]) else S.toClients("PG", e[1], e[2], e[3]) end
+    end
+end
+S.pgCount = nil
+S.every(3000, function()
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 then return end
+    local n = #progressList()
+    if S.pgCount and n > S.pgCount then S.sendProgress(nil) end
+    S.pgCount = n
+end)
+
+S.pgQueue = {}
+handlers.client["PG"] = function(_, p) table.insert(S.pgQueue, p) end
+S.every(500, function()
+    if not S.joined or #S.pgQueue == 0 then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or not controllerReady(pawn) then S.pgReadyAt = nil return end
+    S.pgReadyAt = S.pgReadyAt or (os.clock() + 4)
+    if os.clock() < S.pgReadyAt then return end
+    local u, gi = unlocks()
+    if not u then return end
+    local have = {}
+    for _, e in ipairs(progressList()) do have[e[1] .. e[2]] = true end
+    local added = 0
+    for _ = 1, 8 do
+        local p = table.remove(S.pgQueue, 1)
+        if not p then break end
+        local kind, path = p[1], p[2]
+        if not have[kind .. path] then
+            local cls = StaticFindObject(path)
+            -- HVT info classes aren't loaded until needed (we're well past the map load here)
+            if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(path) end) end
+            if valid(cls) then
+                if kind == "M" then
+                    pcall(function()
+                        local cur = gi.CurrentMissionInfoObject
+                        local curCls = valid(cur) and cur:GetClass() or nil
+                        gi:SetLowestDifficultyThisMission(tonumber(p[3]) or 0)
+                        gi:SetCurrentMission(cls)
+                        gi:CompleteCurrentMission()
+                        if valid(curCls) then gi:SetCurrentMission(curCls) end
+                        added = added + 1
+                    end)
+                else
+                    pcall(function() gi:HVTKilled(cls, {}) added = added + 1 end)
+                end
+                have[kind .. path] = true
+            end
+        end
+    end
+    if added > 0 then
+        pcall(function() gi:SaveUnlocks() end)
+        log("progress from the host: +" .. added)
+        S.stats.progressAdded = (S.stats.progressAdded or 0) + added
+    end
 end)
 end
 

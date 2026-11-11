@@ -374,6 +374,14 @@
 67. **Наблюдение, пока ранен (v0.9.0)** — через 2 с после ранения `pc:SetViewTargetWithBlend(тело напарника, 0.5)`:
     вид его глазами (камера его пешки). ЛКМ (опрос IsInputKeyDown каждые 30 мс; 100 мс пропускали щелчок) — на себя
     и обратно. После подъёма — вид на свою пешку. Во время катсцены не трогаем.
+68. **Прогресс напарника (v0.9.1)** — GameInstance.UnlocksSaveObject: CompletedMissions (FFMissionCompletionInfo:
+    `Mission_4_7EA28D0040AFB8097BCF4889ED5885CF`, `Difficulty_7_C28D9D48484BF1C47AE50F8F002D02D3`), KilledHVTs (элементы —
+    сами UClass, без :get()), UnlockedIntelFiles. Выходные TArray-параметры (GetCompletedMissions(t)) из Lua пустые —
+    читать поля объекта напрямую. Хост → `PG|M|класс|сложность`, `PG|H|класс` при входе и при росте списка. Клиент
+    (через 4 с после готовности пешки): миссия — SetLowestDifficultyThisMission + SetCurrentMission(cls) +
+    CompleteCurrentMission (+ вернуть текущую); HVT — HVTKilled(cls) (класс грузить LoadAsset); затем SaveUnlocks.
+    Проверка: у B до входа очистить списки в памяти (mothtest.ps1 -PreB) → после входа 12/27. Повторное подключение
+    после вылета гостя (убить процесс B, запустить, JOIN) работает без доработок.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

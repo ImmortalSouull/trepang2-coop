@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.9.0 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.9.1 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -51,6 +51,7 @@ the story for everyone - and story objective markers show for every player.
 - Tougher enemies for more players: +0..200% health per extra player (F4 menu - ENEMY HEALTH, default +50%).
 - Boss health bars for every player.
 - While down you watch through your partner's eyes (left click - your own view).
+- Missions finished and HVTs killed together count in every player's own unlocks.
 - Human shields: a partner can grab an enemy (hold it, let it go, throw it) and everyone sees it.
 - Partner fire (incendiary rounds, molotovs) burns the real enemies; burning enemies burn for everyone.
 

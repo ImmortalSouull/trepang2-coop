@@ -85,6 +85,7 @@ KillCultists, KillGhosts, KillSyndicate, KillHorizon, KillMothman, Safehouse_Bet
 - Цель версии: KillCultists, KillGhosts, KillSyndicate проходятся целиком.
 
 ## v0.8.0 — кампания: особые уровни и боссы
+- ✅ v0.7.6: сложность под число игроков (enemy_hp, +50% здоровья за игрока).
 - KillHorizon, KillMothman, Safehouse_Betrayal, финал и титры.
 - Боссы и уникальные механики (погони, падения, «Backrooms», лифтовые сцены).
 - Сайд-миссии.

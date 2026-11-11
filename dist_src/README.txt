@@ -48,6 +48,7 @@ SETTINGS
 --------
 Trepang2\CPPFPS\Binaries\Win64\ue4ss\Mods\T2Coop\config.txt
   look=player (everyone looks as they dressed in the safehouse) or 106 (Light 106 suit for all)
+  enemy_hp=50 (host: enemies get +50% health for every extra player; 0 = off)
 
 UNINSTALL
 ---------

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.7.5"
+local VERSION = "0.7.6"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -3975,7 +3975,7 @@ end
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
-local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player", skin = "" }
+local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player", skin = "", enemy_hp = "50" }
 local function loadConfig()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return end
@@ -4002,11 +4002,38 @@ local function saveConfig()
     f:write("look=" .. tostring(cfg.look or "player") .. "\n")
     f:write("# your enemy outfit (F4 menu - LOOK), empty = your safehouse look\n")
     f:write("skin=" .. tostring(cfg.skin or "") .. "\n")
+    f:write("# enemies get this much more health (percent) for every extra player, set by the host; 0 = off\n")
+    f:write("enemy_hp=" .. tostring(cfg.enemy_hp or "50") .. "\n")
     f:close()
 end
 loadConfig()
 saveConfig()
 S.cfg = cfg
+
+-- Difficulty for more players: the host gives every enemy it sees for the first time
+-- (1 + extra players * enemy_hp%) of its health. Enemies already there when a friend joins keep theirs.
+S.hpSeen, S.hpSeenN = {}, 0
+S.every(250, function()
+    if not S.hosting or not netDriver() then return end
+    local players = #(FindAllOf("PlayerController") or {})
+    local pct = tonumber(cfg.enemy_hp) or 0
+    if players < 2 or pct <= 0 then return end
+    local mult = 1 + (players - 1) * pct / 100
+    if S.hpSeenN > 3000 then S.hpSeen, S.hpSeenN = {}, 0 end
+    for _, n in ipairs(S.allOf("/Game/Blueprint/AI/BaseNPC.BaseNPC_C")) do
+        local key = n:GetFullName()
+        if not S.hpSeen[key] then
+            S.hpSeen[key], S.hpSeenN = true, S.hpSeenN + 1
+            pcall(function()
+                local h = tonumber(n.Health)
+                if h and h > 0 and not n.bIsDead and not S.costumeSet[key] then
+                    n.Health = h * mult
+                    S.stats.hpScaled = (S.stats.hpScaled or 0) + 1
+                end
+            end)
+        end
+    end
+end)
 S.cfgModel = cfg.look
 S.mySkin = cfg.skin or ""
 -- v0.7.2 saved short ids ("mallcop"): use the class path now

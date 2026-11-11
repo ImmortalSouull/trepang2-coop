@@ -330,6 +330,8 @@
     Своя пешка: `Mesh1P:GetAnimInstance():GetCurrentActiveMontage()` → ищем FPP в наборе → `BA|набор|индекс`.
     Получатель: `pawn.Mesh:GetAnimInstance():Montage_Play(TPP_Character, 1, 0, 0, true)` (+ TPP_Weapon на Mesh3P).
     ABP_TPP_Player монтажи проигрывает (перезарядка, замах видны). Fire не шлём (выстрелы — HF).
+57. **Сложность под число игроков (v0.7.6)** — у NPC поле `Health` (MaxHealth — только функция GetMaxHealth). Хост
+    каждому новому NPC: Health *= 1 + (игроков-1)*enemy_hp/100 (config, по умолчанию 50). Урон проходит как обычно.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.15"
+local VERSION = "0.9.16"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -5522,14 +5522,34 @@ end
 local function playerList()
     local names = {}
     if S.hosting or S.joined then
+        local myPs
+        pcall(function() myPs = myPawn().PlayerState:GetFullName() end)
         for _, ps in ipairs(FindAllOf("PlayerState") or {}) do
             local n = S.stateName(ps)
-            if n then table.insert(names, n) end
+            if n then
+                -- health (DOWN) and ping next to each name
+                local extra = ""
+                pcall(function()
+                    local st
+                    if myPs and ps:GetFullName() == myPs then
+                        st = { pct = math.max(0, math.min(100, math.floor((tonumber(myPawn().Health) or 0) / (me.max or 200) * 100 + 0.5))), down = me.down }
+                    else
+                        st = S.hpOf[ps.PlayerId]
+                    end
+                    if st then extra = st.down and "   DOWN" or ("   " .. st.pct .. "%") end
+                end)
+                pcall(function()
+                    local ms = (tonumber(ps.Ping) or 0) * 4
+                    if ms > 0 then extra = extra .. "   " .. ms .. " ms" end
+                end)
+                table.insert(names, n .. extra)
+            end
         end
     end
     if #names == 0 then names = { S.getMyName() } end
     return names
 end
+S.playerList = playerList   -- (dev: T2C.playerList())
 
 -- keep the panel at the right edge of the screen (the game's own menus are on the left);
 -- the viewport size reads 0 for a moment after the loading screen, so this runs on every refresh

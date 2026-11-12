@@ -476,6 +476,8 @@
     `RestartPlayer` пешку не создаёт (гость без пешки; на sm_complex ещё и зависание гостя в SetSkeletalMesh при
     одевании — после исправления пропало). Теперь запасной путь `gm:RestartPlayerAtTransform(pc, рядом с хостом)`.
     Проверено: все 9 карт — хост через F4, вход гостя, гость рядом, без падений/зависаний. Выключатель `T2C.off.dress`.
+91. **F4 HOST на картах кампании (2026-11-12, v0.9.20)** — зайти одному, F4 HOST, вход гостя: Prologue, KillMothman,
+    KillCultists, KillGhosts, KillHorizon — гость рядом с хостом, без падений/зависаний (scratchpad sidetest.ps1).
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

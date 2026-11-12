@@ -118,8 +118,10 @@ card("s90.mp4", 9, [("UNDER THE HOOD", 90, A, "font.ttf"),
                     ("Weapon mods and dual wield carry over to partners  -  health and ping in F4", 42, W, "font2.ttf")])
 segs.append("s90.mp4")
 card("s99.mp4", 5, [("", 80, W, "font.ttf"), ("TREPANG2 CO-OP", 110, A, "font.ttf"),
-                    ("Download & updates: github.com/ImmortalSouull/trepang2-coop", 44, W, "font2.ttf"),
-                    ("", 30, W, "font2.ttf"),
+                    ("Download & updates:", 44, W, "font2.ttf"),
+                    ("nexusmods.com/trepang2/mods/327", 48, W, "font.ttf"),
+                    ("github.com/ImmortalSouull/trepang2-coop", 48, W, "font.ttf"),
+                    ("", 20, W, "font2.ttf"),
                     ("Unofficial fan mod. Not affiliated with Trepang Studios or Team17.", 32, G, "font2.ttf")])
 segs.append("s99.mp4")
 

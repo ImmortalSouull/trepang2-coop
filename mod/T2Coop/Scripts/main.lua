@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.13"
+local VERSION = "0.9.14"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4667,6 +4667,17 @@ end
 handlers.client["PN"] = function(_, p) showPing(p[1] or "PING", vec(p, 2), p[5] == "1") end
 end
 
+-- "TO THE HOST" (F4): the host sends that partner a fresh spawn point next to itself ("S").
+handlers.server["TH"] = function(pc)
+    local host = localPC()
+    if not valid(host) or not valid(host.Pawn) then return end
+    local spot = S.freeSpotNear(host.Pawn, 1)
+    local yaw = host.Pawn:K2_GetActorRotation().Yaw
+    pcall(function() pc.Pawn:K2_SetActorLocation(spot, false, {}, true) end)
+    S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", spot.X, spot.Y, spot.Z), string.format("%.1f", yaw))
+    log("moved " .. pc:GetFName():ToString() .. " to the host")
+end
+
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)
     local pc = localPC()
@@ -4995,6 +5006,7 @@ local function shortName(map) return (map:match("([^/]+)$") or map):gsub("^Horde
 
 local pending = nil
 local function onKey(action) pending = action end
+S.onKey = onKey   -- (dev/tests: run a menu action)
 S.press = onKey   -- dev/tests: same as pressing a menu button ("host", "join", ...)
 pcall(function()
     RegisterKeyBind(Key.F4, function() onKey("menu") end)
@@ -5045,6 +5057,13 @@ S.every(100, function()
     elseif action == "leave" then
         S.notify("CO-OP: leaving")
         S.leave()
+    elseif action == "tohost" then
+        -- a partner stuck somewhere (fell through the floor...): the host puts us next to it again
+        if S.joined and os.clock() - (S.toHostAt or -99) > 10 then
+            S.toHostAt = os.clock()
+            S.toServer("TH")
+            S.notify(S.isRussian() and "CO-OP: переносим к хосту" or "CO-OP: moving you to the host")
+        end
     elseif action == "netmode" then
         S.switchNetMode()
     elseif action == "hpnext" or action == "hpprev" then
@@ -5337,7 +5356,8 @@ local function buildMenu()
     button(tree, root, "LEAVE CO-OP", 0, 306, W2, "leave")
     button(tree, root, "CLOSE   F4", W2 + 10, 306, W2, "close")
     section(tree, root, "PLAYERS", 384)
-    menu.players = label(tree, root, "", 0, 422, "Players", 22, MENU_W, false, 130)
+    menu.players = label(tree, root, "", 0, 422, "Players", 22, W2, false, 130)
+    menu.toHost = button(tree, root, "TO THE HOST", W2 + 10, 422, W2, "tohost")
     section(tree, root, "NETWORK", 556)
     menu.net = label(tree, root, "", 0, 594, "Net", 20, MENU_W, true)
     button(tree, root, "INVITE  (STEAM)", 0, 628, W2, "invite")
@@ -5437,6 +5457,7 @@ local function refreshMenu()
     end)
     local list = playerList()
     pcall(function() menu.players:SetText(FText(table.concat(list, "\n"))) end)
+    if menu.toHost then menu.toHost.enabled = S.joined and true or false end
     local net
     if cfg.net ~= S.netMode then
         net = "Network: " .. cfg.net:upper() .. " after you restart the game"
@@ -5472,7 +5493,8 @@ local function refreshMenu()
         local n = #(FindAllOf("PlayerController") or {})
         local txt = pct <= 0 and "SAME FOR ANY NUMBER OF PLAYERS"
             or string.format("+%d%% PER EXTRA PLAYER   (NOW x%.2g)", pct, 1 + math.max(n - 1, 0) * pct / 100)
-        if S.joined then txt = txt .. " - HOST DECIDES" end
+        -- on a partner it's their own setting, used only when they host
+        if S.joined then txt = pct <= 0 and "OFF - WHEN YOU HOST" or string.format("+%d%% PER PLAYER - WHEN YOU HOST", pct) end
         menu.hpTile.t:SetText(FText(txt))
     end)
     for i, slot in ipairs(menu.fslots or {}) do

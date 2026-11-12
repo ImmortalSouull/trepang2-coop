@@ -56,6 +56,7 @@ if (Test-Path (Join-Path $dst "config.txt")) { $keepConfig = Get-Content (Join-P
 New-Item -ItemType Directory -Force (Join-Path $dst "Scripts") | Out-Null
 Copy-Item (Join-Path $here "files\Mods\T2Coop\Scripts\*") (Join-Path $dst "Scripts") -Force
 Copy-Item (Join-Path $here "files\Mods\T2Coop\t2coop_steam.dll") $dst -Force
+Copy-Item (Join-Path $here "files\Mods\T2Coop\fixini.ps1") $dst -Force
 if ($keepConfig) { Set-Content (Join-Path $dst "config.txt") $keepConfig -NoNewline }
 
 $modsTxt = Join-Path $mods "mods.txt"

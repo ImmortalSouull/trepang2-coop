@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.17"
+local VERSION = "0.9.18"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4312,6 +4312,7 @@ end
 -- Host -> clients "PG|M|mission class|difficulty" and "PG|H|hvt class": everything on joining and new
 -- entries when they appear. A client adds what it lacks (CompleteCurrentMission with that mission set
 -- as current / HVTKilled) and saves its Unlocks - a few seconds after its pawn is ready.
+-- Also "PG|C|customization class" (weapon customization unlocks) and "PG|D|dual" (dual wield).
 ---------------------------------------------------------------------------
 do
 local MF, DF = "Mission_4_7EA28D0040AFB8097BCF4889ED5885CF", "Difficulty_7_C28D9D48484BF1C47AE50F8F002D02D3"
@@ -4338,6 +4339,14 @@ local function progressList()
             if valid(h) then table.insert(list, { "H", h:GetFullName():match("%s(.+)$"), 0 }) end
         end
     end)
+    -- weapon customization unlocks (same: UClasses) and dual wield
+    pcall(function()
+        for i = 1, u.UnlockedWeaponCustomizations:GetArrayNum() do
+            local c = u.UnlockedWeaponCustomizations[i]
+            if valid(c) then table.insert(list, { "C", c:GetFullName():match("%s(.+)$"), 0 }) end
+        end
+    end)
+    pcall(function() if u.DualWieldUnlocked then table.insert(list, { "D", "dual", 0 }) end end)
     return list
 end
 function S.sendProgress(pc)
@@ -4370,7 +4379,10 @@ S.every(500, function()
         local p = table.remove(S.pgQueue, 1)
         if not p then break end
         local kind, path = p[1], p[2]
-        if not have[kind .. path] then
+        if kind == "D" and not have["Ddual"] then
+            pcall(function() u.DualWieldUnlocked = true added = added + 1 end)
+            have["Ddual"] = true
+        elseif kind ~= "D" and not have[kind .. path] then
             local cls = StaticFindObject(path)
             -- HVT info classes aren't loaded until needed (we're well past the map load here)
             if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(path) end) end
@@ -4385,6 +4397,8 @@ S.every(500, function()
                         if valid(curCls) then gi:SetCurrentMission(curCls) end
                         added = added + 1
                     end)
+                elseif kind == "C" then
+                    pcall(function() gi:UnlockWeaponCustomization(cls) added = added + 1 end)
                 else
                     pcall(function() gi:HVTKilled(cls, {}) added = added + 1 end)
                 end

@@ -462,6 +462,9 @@
     (скрипт уровня перенёс его: Backrooms, переходы сцен) → через 1,5 с всех, кто дальше 2500 ед., переносит
     обработчиком `TH` + уведомление. Пока вид на камере сцены (view target ≠ пешка) — ждёт. Выключатель
     `T2C.off.autofollow`. Проверено в Killhouse: перенос хоста к BuyZone → гость рядом через 1,6 с.
+88. **Модификации оружия и парное оружие у напарника (v0.9.18)** — `UnlockedWeaponCustomizations` (UClass'ы) →
+    `PG|C|класс` → клиент `gi:UnlockWeaponCustomization(cls)`; `DualWieldUnlocked` → `PG|D|dual` → поле = true;
+    затем SaveUnlocks. Проверка: у B очистить в памяти (Empty / false) до входа → после входа 21/true, как у хоста.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

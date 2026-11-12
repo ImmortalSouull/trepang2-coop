@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.3"
+local VERSION = "0.9.4"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -25,7 +25,18 @@ _G.T2C = S
 ---------------------------------------------------------------------------
 local TICK_MS = 30
 local tasks = {}
-function S.every(ms, fn) table.insert(tasks, { iv = ms, acc = ms, fn = fn }) end
+function S.every(ms, fn)
+    local info = debug and debug.getinfo and debug.getinfo(2, "l")
+    table.insert(tasks, { iv = ms, acc = ms, fn = fn, where = "line " .. tostring(info and info.currentline or "?") .. " /" .. ms })
+end
+function S.profTop(n)
+    local list = {}
+    for k, v in pairs(S.prof or {}) do table.insert(list, { k, v }) end
+    table.sort(list, function(a, b) return a[2] > b[2] end)
+    local out = {}
+    for i = 1, math.min(n or 8, #list) do out[#out + 1] = string.format("%s=%.0fms", list[i][1], list[i][2] * 1000) end
+    return table.concat(out, "  ")
+end
 local running = false
 S.off = {}          -- dev: switch single features off (S.off.fire = true ...)
 S.graceMs = 0       -- no tasks while a map loads (old world torn down) and briefly after
@@ -35,6 +46,7 @@ local function runTasks(dtMs)
     if S.graceMs > 0 then S.graceMs = S.graceMs - dtMs; return end
     if S.gcStopped then S.gcStopped = false; collectgarbage("restart") end
     running = true
+    S.tickId = (S.tickId or 0) + 1
     for i = #tasks, 1, -1 do
         local t = tasks[i]
         if t then
@@ -42,7 +54,13 @@ local function runTasks(dtMs)
             if t.acc >= t.iv then
                 local dt = t.acc
                 t.acc = 0
+                local c0 = S.prof and os.clock()
                 local ok, res = pcall(t.fn, dt)
+                if c0 then
+                    -- dev: T2C.prof = {} collects Lua time per task (T2C.profTop() to read)
+                    local key = t.where or "?"
+                    S.prof[key] = (S.prof[key] or 0) + (os.clock() - c0)
+                end
                 if not ok then
                     log("task error: " .. tostring(res))
                 elseif res == true then
@@ -85,7 +103,12 @@ if LoopInGameThreadWithDelay then
 end
 
 local function valid(o) return o ~= nil and o:IsValid() end
-local function engine() return FindFirstOf("GameEngine") end
+local function engine()
+    -- (one GameEngine for the whole run: look it up once - nearly every task goes through here)
+    if S.engineObj and S.engineObj:IsValid() then return S.engineObj end
+    S.engineObj = FindFirstOf("GameEngine")
+    return S.engineObj
+end
 local function world()
     local e = engine()
     if valid(e) and valid(e.GameViewport) then return e.GameViewport.World end
@@ -189,9 +212,16 @@ function S.leave()
     openLevel("/Game/Maps/Menu/FrontEndMenuMap", "")
 end
 
+-- (cached for one scheduler tick: dozens of tasks ask for it)
+S.lpcCache = { tick = -1, pc = nil }
 local function localPC()
+    local lpcCache = S.lpcCache
+    if lpcCache.tick == S.tickId and valid(lpcCache.pc) then return lpcCache.pc end
     for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
-        if valid(pc) and pc:IsLocalController() then return pc end
+        if valid(pc) and pc:IsLocalController() then
+            lpcCache.tick, lpcCache.pc = S.tickId, pc
+            return pc
+        end
     end
 end
 
@@ -965,7 +995,7 @@ function S.playBodyAction(pawn, setName, idx)
 end
 
 local ba = { last = nil }
-S.every(0, function()
+S.every(30, function()
     if not (S.hosting or S.joined) or not netDriver() then return end
     local pawn = ownPawn()
     if not valid(pawn) then return end
@@ -1124,6 +1154,7 @@ handlers.client["RV"] = function() local p = myPawn(); if valid(p) and me.down t
 -- switches between them and yourself); back to your own eyes when you're revived.
 S.spec = { on = false, since = nil, lmb = false, self = false }
 S.every(30, function()
+    if not me.down and not S.spec.on then return end
     if not (S.hosting or S.joined) or not netDriver() then return end
     local pc, p = localPC(), myPawn()
     if not valid(pc) or not valid(p) then return end
@@ -1751,7 +1782,7 @@ end
 -- radial damage there on the partner's behalf (players are not hurt).
 ---------------------------------------------------------------------------
 S.myGrenades = {}
-S.every(0, function()
+S.every(100, function()
     if not S.joined or not netDriver() then return end
     local mine = S.client.pawn
     if not valid(mine) then return end
@@ -3504,10 +3535,12 @@ S.interacted = function(c) interacted(compInfo(c)) end
 -- ia.cur: the focused component (address + info); ia.hold: a timed one counting down
 local ia = { cur = nil, hold = nil, keyWas = false }
 local INTERACT_KEYS
-S.every(0, function()
+S.every(30, function()
     if not (S.hosting or S.joined) or not netDriver() or S.off.ia then return end
     local pawn, pc = myPawn(), localPC()
     if not valid(pawn) or not valid(pc) then return end
+    -- nothing in focus and nothing being held: skip the key reads (the costly part)
+    if not ia.hold and not ia.cur and not valid(pawn.InteractableComp) then ia.keyWas = true return end
     INTERACT_KEYS = INTERACT_KEYS or {
         { KeyName = FName("F", EFindName.FNAME_Add) },
         { KeyName = FName("Gamepad_FaceButton_Left", EFindName.FNAME_Add) },
@@ -4089,7 +4122,7 @@ local function drain(comp, onEach)
     pcall(function() comp.PointDamageIndicators:Empty() end)
 end
 
-S.every(100, function()
+S.every(250, function()
     if not (S.hosting or S.joined) or not netDriver() then return end
     local mine = S.joined and S.client and S.client.pawn
     if not S.joined then local pc = localPC(); mine = valid(pc) and pc.Pawn or nil end
@@ -4672,7 +4705,7 @@ end)
 local keyState = {}
 local KEYS = { F4 = "menu" }
 local keyStructs = {}
-S.every(50, function()
+S.every(80, function()
     local pc = localPC()
     if not valid(pc) then return end
     for name, action in pairs(KEYS) do
@@ -5187,7 +5220,7 @@ end
 -- While the F4 menu or the game's own Esc menu (UI_MainMenu_C; in co-op the game can't pause) is
 -- open, the player's controls are off: no walking, looking or shooting behind the menu.
 S.inputBlock = { on = false, pawn = nil }
-S.every(100, function()
+S.every(150, function()
     local pc = localPC()
     local pawn = myPawn()
     local want = false

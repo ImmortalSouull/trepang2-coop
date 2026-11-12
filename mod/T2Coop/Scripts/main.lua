@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.9"
+local VERSION = "0.9.10"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -152,7 +152,15 @@ local function stopLoadingScreen()
     if S.joined and S.client and S.client.spawn then return end
     local up = false
     pcall(function() up = valid(gi.CurrentLoadingWidget) end)
-    if up then pcall(function() gi:ForceStopLoadingScreen() end) end
+    if not up then return end
+    -- "Press any key" the way the game does it. ForceStopLoadingScreen while the loading screen was
+    -- still drawing on its own thread deadlocked the game (game thread vs loading-screen thread,
+    -- both waiting on a lock) - the rare freeze right after starting to host / travelling.
+    if S.forceStopLS then
+        pcall(function() gi:ForceStopLoadingScreen() end)
+    else
+        pcall(function() gi:BPOnLoadingScreenKeyPressed() end)
+    end
 end
 
 S.stopLoadingScreen = stopLoadingScreen

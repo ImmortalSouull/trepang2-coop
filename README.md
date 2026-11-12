@@ -51,7 +51,9 @@ the story for everyone - and story objective markers show for every player.
 - Tougher enemies for more players: +0..200% health per extra player (F4 menu - ENEMY HEALTH, default +50%).
 - Boss health bars for every player.
 - While down you watch through your partner's eyes (left click - your own view).
-- Missions finished and HVTs killed together count in every player's own unlocks.
+- Missions finished, HVTs killed, weapon customizations and dual wield count in every player's own unlocks.
+- When the level moves the host far away (Backrooms, scene cuts), partners are brought along automatically.
+- F4 player list shows each player's health (or DOWN) and ping.
 - Flashlights (T) are seen by everyone; slow-mo (Q) - the host's or a partner's - slows time for all players; invisibility (E) hides you from everyone and from the enemies.
 - Partner markers show their health ("Name 60%") or DOWN.
 - Stuck or fell through the map? F4 - TO THE HOST puts you next to the host.

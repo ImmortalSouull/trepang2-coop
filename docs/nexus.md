@@ -33,7 +33,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*]Enemy squads come from the host and are the same for everybody.
 [*][b]Boss health bars[/b] show for every player, not just the host.
 [*][b]Tougher enemies for more players[/b]: +50% health for every extra player (campaign and Horde). The host picks it in the F4 menu - ENEMY HEALTH: from +0% to +200% per extra player.
-[*]Checkpoints are saved by the host only - friends' own campaign saves are left alone. [b]Progress counts for friends too[/b]: missions finished and HVTs killed together are added to every player's own unlocks. Crashed? Restart the game and join again - you're put back next to the host.
+[*]Checkpoints are saved by the host only - friends' own campaign saves are left alone. [b]Progress counts for friends too[/b]: missions finished, HVTs killed, weapon customizations and dual wield are added to every player's own unlocks. Crashed? Restart the game and join again - you're put back next to the host. When the level moves the host far away (the Backrooms, scene cuts), friends are brought along.
 [*][b]Down & revive[/b]: drop below 30% HP and you go down; a partner standing next to you revives you. While down you watch through your partner's eyes (left click switches to your own view). If everyone is down, the group goes back to the last checkpoint.
 [/list]
 
@@ -76,7 +76,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Controls[/b][/size]
 [list]
-[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look, enemy health, and TO THE HOST (stuck somewhere? it puts you next to the host).
+[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look, enemy health, players with their health and ping, and TO THE HOST (stuck somewhere? it puts you next to the host).
 [*][b]X[/b] (gamepad: d-pad left) - ping: a marker with your name where you look, for everyone, 8 seconds. On an enemy it sticks to them and says ENEMY.
 [/list]
 

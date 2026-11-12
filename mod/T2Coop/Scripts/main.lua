@@ -2138,9 +2138,72 @@ local function clothesMaterial(pawn)
     return out
 end
 
+-- Some enemy classes never finish loading when loaded on demand (the game froze for good when such
+-- an enemy look was picked, e.g. Bad Oil's Emerson Minigun). Those are left out of the looks. Besides
+-- the ones found by testing every look, a guard: before a load we write the asset into loading.txt and
+-- clear it after; if the game froze on it, the next start finds it there and never loads it again.
+S.badSkin = S.badSkin or {}
+S.BAD_LOOKS_PATH = "ue4ss/Mods/T2Coop/bad_looks.txt"
+S.LOADING_PATH = "ue4ss/Mods/T2Coop/loading.txt"
+for _, b in ipairs({
+    "/Game/Character/NPC/Human/Type/Blue/BadOil/NPC_Emerson/NPC_Emerson_Minigun.NPC_Emerson_Minigun_C",
+    "/Game/Character/NPC/Human/Type/Blue/BadOil/Outlaw/NPC_Outlaw_SMG1_Redshirt.NPC_Outlaw_SMG1_Redshirt_C",
+    "/Game/Character/NPC/Human/Type/Blue/HECU/NPC_RigWorker_Pistol_LawyerThugVoice.NPC_RigWorker_Pistol_LawyerThugVoice_C",
+    "/Game/Character/NPC/Human/Type/Blue/NPC_Guard_Smg1_CantShootUnarmed.NPC_Guard_Smg1_CantShootUnarmed_C",
+    "/Game/Character/NPC/Human/Type/Blue/SSF/NPC_SSF_Spas_9.NPC_SSF_Spas_9_C",
+    "/Game/Character/NPC/Human/Type/Cultist/NPC_CultistRedShirt.NPC_CultistRedShirt_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_BravoSoldier.NPC_Merc_BravoSoldier_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_Rifle_S_NVG.NPC_Merc_Rifle_S_NVG_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_Rifle_SpectreLastStand.NPC_Merc_Rifle_SpectreLastStand_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_SMG_MothRooftopRedshirt.NPC_Merc_SMG_MothRooftopRedshirt_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_SMG_S_NVG.NPC_Merc_SMG_S_NVG_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_Shotgun_NVG.NPC_Merc_Shotgun_NVG_C",
+    "/Game/Character/NPC/Human/Type/Green/NPC_Merc_Support.NPC_Merc_Support_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Deadeye.NPC_TF63_Deadeye_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Denver.NPC_TF63_Denver_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Firefly.NPC_TF63_Firefly_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Freakshow.NPC_TF63_Freakshow_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Funnyman.NPC_TF63_Funnyman_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Grunt_Stalker.NPC_TF63_Grunt_Stalker_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_KillJoy.NPC_TF63_KillJoy_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Mercy.NPC_TF63_Mercy_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Tank.NPC_TF63_Tank_C",
+    "/Game/Character/NPC/Human/Type/Green/TF63/Unique/NPC_TF63_Wolfhound.NPC_TF63_Wolfhound_C",
+    "/Game/Character/NPC/Human/Type/Green/Unique/NPC_Merc_Ghost2.NPC_Merc_Ghost2_C",
+    "/Game/Character/NPC/Human/Type/Green/Unique/NPC_Merc_Quartermaster.NPC_Merc_Quartermaster_C",
+    "/Game/Character/NPC/Human/Type/Green/Unique/NPC_Merc_Rangemaster.NPC_Merc_Rangemaster_C",
+    "/Game/Character/NPC/Human/Type/Hazmat/NPC_Hazmat.NPC_Hazmat_C",
+    "/Game/Character/NPC/Special/Ghost/NPC_Ghost_Shadow_Slow.NPC_Ghost_Shadow_Slow_C",
+}) do S.badSkin[b] = true end
+pcall(function()
+    local f = io.open(S.BAD_LOOKS_PATH, "r")
+    if f then
+        for line in f:lines() do if line:find("/") then S.badSkin[line:gsub("%s+$", "")] = true end end
+        f:close()
+    end
+    local m = io.open(S.LOADING_PATH, "r")
+    if m then
+        local hung = (m:read("*a") or ""):gsub("%s+$", "")
+        m:close()
+        os.remove(S.LOADING_PATH)
+        if hung ~= "" then
+            S.badSkin[hung] = true
+            local w = io.open(S.BAD_LOOKS_PATH, "a")
+            if w then w:write(hung .. "\n"); w:close() end
+            S.lookHungAtStart = hung
+            log("the game froze loading " .. hung .. " last time - that look is off now")
+        end
+    end
+end)
 local function loadObj(path)
     local o = StaticFindObject(path)
-    if not valid(o) and LoadAsset then pcall(function() o = LoadAsset(path) end) end
+    if not valid(o) and LoadAsset then
+        if S.badSkin[path] then return nil end
+        local m = io.open(S.LOADING_PATH, "w")
+        if m then m:write(path); m:close() end
+        pcall(function() o = LoadAsset(path) end)
+        os.remove(S.LOADING_PATH)
+    end
     return valid(o) and o or nil
 end
 
@@ -2277,12 +2340,12 @@ function S.catalog()
         end
         fac = FACTION_NAMES[fac] or fac
         groups[fac] = groups[fac] or {}
-        table.insert(groups[fac], { id = path, name = name:gsub("_", " ") })
+        if not S.badSkin[path] then table.insert(groups[fac], { id = path, name = name:gsub("_", " ") }) end
     end
     local cat = {}
     for fac, list in pairs(groups) do
         table.sort(list, function(a, b) return a.name < b.name end)
-        table.insert(cat, { name = fac, list = list })
+        if #list > 0 then table.insert(cat, { name = fac, list = list }) end
     end
     table.sort(cat, function(a, b) return a.name < b.name end)
     S.cat = cat
@@ -2299,7 +2362,6 @@ function S.lookIndex(id)
     end
     return 0, 0
 end
-S.badSkin = {}
 local function skinById(id)
     if not id or id == "" or S.badSkin[id] then return nil end
     for _, k in ipairs(S.SKINS) do if k.id == id then return k end end
@@ -2312,6 +2374,32 @@ local function skinById(id)
 end
 S.skinById = skinById
 S.costumes = {}       -- body full name -> { actor, id }
+-- The guns of a costume / preview NPC: destroying them while the NPC lived left the NPC pointing at a
+-- deleted gun, and a few minutes later (garbage collection) both games crashed - e.g. after opening the
+-- F4 LOOK preview ~7 times. Now they're only hidden, and destroyed after their NPC.
+S.npcGuns = {}        -- npc full name -> { guns }
+function S.hideNpcGuns(a)
+    local list = {}
+    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+        local ok, own = pcall(function() return same(w.Owner, a) end)
+        if ok and own then
+            pcall(function() w:SetActorHiddenInGame(true) end)
+            pcall(function() w:SetActorEnableCollision(false) end)
+            table.insert(list, w)
+        end
+    end
+    S.npcGuns[a:GetFullName()] = list
+end
+function S.destroyLookNpc(a)
+    if not valid(a) then return end
+    local key = a:GetFullName()
+    local guns = S.npcGuns[key] or {}
+    S.npcGuns[key] = nil
+    pcall(function() a:K2_DestroyActor() end)
+    for _, w in ipairs(guns) do
+        if valid(w) then pcall(function() w:K2_DestroyActor() end) end
+    end
+end
 S.costumeSet = {}     -- costume actor full name -> true
 
 local function removeCostume(p)
@@ -2321,7 +2409,7 @@ local function removeCostume(p)
     S.costumes[key] = nil
     if valid(c.actor) then
         S.costumeSet[c.actor:GetFullName()] = nil
-        pcall(function() c.actor:K2_DestroyActor() end)
+        S.destroyLookNpc(c.actor)
     end
     pcall(function() p.Mesh:SetHiddenInGame(false, false) end)
 end
@@ -2355,16 +2443,13 @@ local function wearCostume(p, id)
     pcall(function() a:SetActorTickEnabled(false) end)
     pcall(function() a.bIsDead = true end)
     pcall(function() a.CharacterMovement:SetComponentTickEnabled(false) end)
-    -- its own guns go
-    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
-        local ok, own = pcall(function() return same(w.Owner, a) end)
-        if ok and own then pcall(function() w:K2_DestroyActor() end) end
-    end
+    -- its own guns: hidden (see S.hideNpcGuns)
+    S.hideNpcGuns(a)
     local okSk, sameSk = pcall(function() return same(a.Mesh.SkeletalMesh.Skeleton, p.Mesh.SkeletalMesh.Skeleton) end)
     if okSk and not sameSk then
         log("enemy outfit " .. id .. ": other skeleton - not usable")
         S.badSkin[id] = true
-        pcall(function() a:K2_DestroyActor() end)
+        S.destroyLookNpc(a)
         return false
     end
     -- its body onto the player's, following the player's pose
@@ -2401,14 +2486,12 @@ local function spawnTameNPC(cls, loc)
     pcall(function() a:SetActorEnableCollision(false) end)
     pcall(function() a.CharacterMovement:SetComponentTickEnabled(false) end)
     pcall(function() a.CharacterMovement:SetMovementMode(0, 0) end)   -- no falling
-    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
-        local ok, own = pcall(function() return same(w.Owner, a) end)
-        if ok and own then pcall(function() w:K2_DestroyActor() end) end
-    end
+    S.hideNpcGuns(a)
     return a
 end
 
 local function previewFigure(skinId, loc)
+    if S.off.pvnpc then return nil end
     local skin = skinById(skinId)
     if skin then
         local cls = loadObj(skin.cls)
@@ -2448,8 +2531,20 @@ end
 
 function S.previewDestroy()
     local pv = S.preview
-    for _, k in ipairs({ "figure", "cam", "driver", "backdrop" }) do
-        if valid(pv[k]) then pcall(function() pv[k]:K2_DestroyActor() end) end
+    -- the capture camera goes FIRST, stopped and with an empty show-only list: removing the figure while
+    -- the camera still drew it crashed the renderer a few opens later ("DrawSceneCommand", both players)
+    if valid(pv.cam) then
+        pcall(function()
+            local cc = pv.cam.CaptureComponent2D
+            cc.bCaptureEveryFrame = false
+            cc:ClearShowOnlyComponents()
+            cc.TextureTarget = nil
+        end)
+        pcall(function() pv.cam:K2_DestroyActor() end)
+    end
+    pv.cam = nil
+    for _, k in ipairs({ "figure", "driver", "backdrop" }) do
+        if valid(pv[k]) then S.destroyLookNpc(pv[k]) end
         pv[k] = nil
     end
     for _, l in ipairs(pv.lights or {}) do
@@ -2460,6 +2555,15 @@ function S.previewDestroy()
     if valid(pv.image) then pcall(function() pv.image:SetRenderOpacity(0) end) end
 end
 
+-- Closing the menu only pauses the preview (camera off); opening it again with the same look wakes it up.
+-- (Re-creating the figure, camera and lights on every open crashed both games in co-op after ~7 opens.)
+function S.previewPause()
+    local pv = S.preview
+    if valid(pv.cam) then pcall(function() pv.cam.CaptureComponent2D.bCaptureEveryFrame = false end) end
+    pv.paused = true
+    if valid(pv.image) then pcall(function() pv.image:SetRenderOpacity(0) end) end
+end
+
 -- keep the preview in step with S.mySkin; called while the menu is open
 function S.previewUpdate(image)
     local pv = S.preview
@@ -2467,6 +2571,16 @@ function S.previewUpdate(image)
     local pc = localPC()
     if not valid(pc) or not valid(pc.Pawn) or not valid(pv.image) then return end
     local want = S.mySkin or ""
+    if pv.skin == want and valid(pv.figure) and valid(pv.cam) then
+        if pv.paused then
+            pv.paused = false
+            pcall(function() pv.cam.CaptureComponent2D.bCaptureEveryFrame = true end)
+            pcall(function() pv.image:SetBrushResourceObject(pv.rt) end)
+            pcall(function() pv.image:SetRenderOpacity(1) end)
+        end
+        return
+    end
+    pv.paused = false
     if pv.skin ~= want or not valid(pv.figure) or not valid(pv.cam) then
         S.previewDestroy()
         pv.skin = want
@@ -2477,7 +2591,7 @@ function S.previewUpdate(image)
         local okSk, sameSk = pcall(function() return same(figure.Mesh.SkeletalMesh.Skeleton, pc.Pawn.Mesh.SkeletalMesh.Skeleton) end)
         if want ~= "" and okSk and not sameSk then
             S.badSkin[want] = true
-            pcall(function() figure:K2_DestroyActor() end)
+            S.destroyLookNpc(figure)
             return
         end
         -- only the preview camera sees it
@@ -2553,7 +2667,7 @@ end
 -- turn the figure slowly; the camera stays in front of it
 S.every(0, function(dt)
     local pv = S.preview
-    if not valid(pv.figure) or not valid(pv.cam) then return end
+    if pv.paused or not valid(pv.figure) or not valid(pv.cam) then return end
     pv.yaw = (pv.yaw + (dt or 30) * 0.045) % 360
     local b = pv.base
     pcall(function() pv.figure:K2_SetActorLocationAndRotation({ X = b.X, Y = b.Y, Z = b.Z + (pv.zoff or 0) }, { Pitch = 0, Yaw = pv.yaw, Roll = 0 }, false, {}, true) end)
@@ -5263,6 +5377,15 @@ S.every(100, function()
 end)
 end
 
+-- tell the player once if their enemy look was switched off (it froze the game)
+S.every(3000, function()
+    if not (S.lookReset or S.lookHungAtStart) or not valid(myPawn()) then return end
+    S.lookReset, S.lookHungAtStart = nil, nil
+    S.notify(S.isRussian() and "CO-OP: этот облик врага вешал игру - он отключён, снова ваш наряд из убежища"
+        or "CO-OP: that enemy look froze the game - it's off now, back to your safehouse outfit")
+    return true
+end)
+
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)
     local pc = localPC()
@@ -5499,6 +5622,12 @@ S.mySkin = cfg.skin or ""
 if S.mySkin ~= "" and not S.mySkin:find("/") then
     S.mySkin = ""
     for _, k in ipairs(S.SKINS or {}) do if k.id == cfg.skin then S.mySkin = k.cls end end
+end
+-- a look that can't be loaded (see loadObj): back to the safehouse outfit
+if S.mySkin ~= "" and S.badSkin[S.mySkin] then
+    S.mySkin, cfg.skin = "", ""
+    saveConfig()
+    S.lookReset = true
 end
 pcall(ensureEngineIni, cfg.net)
 
@@ -6294,7 +6423,7 @@ local function setMenuInput(on)
 end
 
 function S.menuClose()
-    pcall(S.previewDestroy)
+    pcall(S.previewPause)
     if valid(menu.w) then pcall(function() menu.w:RemoveFromParent() end) end
     menu.w = nil
     if menu.open then setMenuInput(false) end
@@ -6315,7 +6444,7 @@ function S.menuTab(tab)
     if tab == menu.page and valid(menu.w) then return end
     if tab ~= "quick" then S.lastTab = tab end
     menu.page = tab
-    pcall(S.previewDestroy)
+    pcall(S.previewPause)
     S.preview.image = nil
     if valid(menu.w) then pcall(function() menu.w:RemoveFromParent() end) end
     menu.w, menu.x, menu.scale = nil, nil, nil

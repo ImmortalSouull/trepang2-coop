@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.2"
+local VERSION = "0.9.3"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1236,8 +1236,18 @@ S.every(1000, function()
     if os.time() >= S.rejoin.at and S.rejoin.tries < 12 then
         local tries = S.rejoin.tries + 1
         log("reconnecting to " .. S.lastIP .. " (try " .. tries .. ")")
+        if tries > 1 then
+            S.notify(string.format(S.isRussian() and "CO-OP: хост не отвечает - переподключение (%d/12)"
+                or "CO-OP: the host doesn't answer - reconnecting (%d/12)", tries))
+        end
         S.join(S.lastIP)            -- resets S.rejoin
         S.rejoin = { at = os.time() + 15, tries = tries }
+    elseif os.time() >= S.rejoin.at and S.rejoin.tries >= 12 then
+        -- give up: the host is gone for good
+        S.joined, S.rejoin = false, nil
+        log("gave up reconnecting")
+        S.notify(S.isRussian() and "CO-OP: связь с хостом потеряна - F4, JOIN, чтобы зайти снова"
+            or "CO-OP: lost the host - F4, JOIN to join again")
     end
 end)
 

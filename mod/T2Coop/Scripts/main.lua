@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.16"
+local VERSION = "0.9.17"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4798,6 +4798,51 @@ handlers.client["BYOK"] = function(_, p)
     end
     S.notify(string.format(S.isRussian() and "CO-OP: куплено ($%s) - лежит у вас за спиной" or "CO-OP: bought ($%s) - it's right behind you", tostring(p[3] or "?")))
 end
+end
+
+-- The level script moves the host somewhere else in one go (Backrooms, elevator/scene cuts, story jumps):
+-- partners that are left far away are brought next to the host (same as "TO THE HOST").
+do
+S.hostJump = { last = nil, at = nil }
+S.every(250, function()
+    if not S.hosting or S.off.autofollow then return end
+    local pc = localPC()
+    local pawn = valid(pc) and pc.Pawn
+    if not valid(pawn) then S.hostJump.last = nil return end
+    local ok, l = pcall(function() return pawn:K2_GetActorLocation() end)
+    if not ok or not l then return end
+    local last = S.hostJump.last
+    S.hostJump.last = { X = l.X, Y = l.Y, Z = l.Z }
+    if last then
+        local dx, dy, dz = l.X - last.X, l.Y - last.Y, l.Z - last.Z
+        if dx * dx + dy * dy + dz * dz > 2500 * 2500 then
+            S.hostJump.at = os.clock() + 1.5   -- let the new place settle first
+            log(string.format("host jumped %.0f units", math.sqrt(dx * dx + dy * dy + dz * dz)))
+        end
+    end
+    if S.hostJump.at and os.clock() > S.hostJump.at then
+        S.hostJump.at = nil
+        -- not during a scene: the view is on a camera, not on the host's pawn
+        local vt
+        pcall(function() vt = pc:GetViewTarget() end)
+        if valid(vt) and vt:GetFullName() ~= pawn:GetFullName() then
+            S.hostJump.at = os.clock() + 1
+            return
+        end
+        for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+            pcall(function()
+                if valid(other) and not other:IsLocalController() and valid(other.Pawn) then
+                    local o = other.Pawn:K2_GetActorLocation()
+                    local ddx, ddy, ddz = o.X - l.X, o.Y - l.Y, o.Z - l.Z
+                    if ddx * ddx + ddy * ddy + ddz * ddz > 2500 * 2500 then
+                        handlers.server["TH"](other)
+                        S.toClient(other, "NT", S.isRussian() and "CO-OP: вы перенесены к хосту" or "CO-OP: you were moved to the host")
+                    end
+                end
+            end)
+        end
+    end
+end)
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

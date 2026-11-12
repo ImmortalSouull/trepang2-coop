@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.22"
+local VERSION = "0.9.23"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -39,6 +39,7 @@ function S.profTop(n)
 end
 local running = false
 S.off = {}          -- dev: switch single features off (S.off.fire = true ...)
+S.logRx = os.getenv("T2RX") ~= nil   -- dev: log every received co-op message
 S.graceMs = 0       -- no tasks while a map loads (old world torn down) and briefly after
 local function runTasks(dtMs)
     if running then return end   -- never re-enter (game calls made by a task can tick hooks)
@@ -452,6 +453,7 @@ local function dispatch(side, pc, text)
     local parts = split(text:sub(#PREFIX + 1))
     local kind = table.remove(parts, 1)
     local h = handlers[side][kind]
+    if S.logRx then log("rx " .. side .. " " .. tostring(kind) .. " " .. table.concat(parts, "|"):sub(1, 80)) end
     if h then
         local ok, err = pcall(h, pc, parts)
         if not ok then log(side .. " handler " .. kind .. " error: " .. tostring(err)) end
@@ -643,6 +645,7 @@ RegisterLoadMapPreHook(function()
     S.myGrenades = {}
     S.trigSeen = {}
     S.trQueue, S.trReadyAt = {}, nil
+    S.doQueue, S.doReadyAt = {}, nil
     if S.cut then S.cut = { active = false } end
     S.gate, S.gateDone, S.lastTrig = nil, {}, nil
     S.expectPlayers, S.expectUntil = S.lastCount or 1, os.clock() + 120
@@ -2733,7 +2736,16 @@ S.every(2000, function()
         local pc = localPC()
         if not valid(pc) or not valid(pc.Pawn) or #(FindAllOf("PlayerController") or {}) < 2 then return end
         S.toClients("CU", S.pidOf(pc.Pawn) or -1, myLook(pc.Pawn))
-        for pid, look in pairs(S.looks) do S.toClients("CU", pid, look.key) end
+        -- only players still here (a partner who left or rejoined gets a new id; the old one would
+        -- otherwise be sent forever)
+        local here = {}
+        for _, x in ipairs(FindAllOf("PlayerController") or {}) do
+            local id = valid(x) and valid(x.Pawn) and S.pidOf(x.Pawn)
+            if id then here[id] = true end
+        end
+        for pid, look in pairs(S.looks) do
+            if here[pid] then S.toClients("CU", pid, look.key) else S.looks[pid] = nil end
+        end
     end
 end)
 
@@ -3630,7 +3642,23 @@ function S.sendDoors(pc)
         if l == 1 or o == 1 then S.toClient(pc, "DO", d:GetFName():ToString(), l, o, side) end
     end
 end
-handlers.client["DO"] = function(_, p)
+-- Queued like the host's triggers: applying the newcomer's batch of door states in the same frame as
+-- the spawn point (sub-levels and our pawn still setting up) crashed the partner now and then.
+S.doQueue = {}
+handlers.client["DO"] = function(_, p) table.insert(S.doQueue, p) end
+S.every(200, function()
+    if #S.doQueue == 0 or not S.joined then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or not controllerReady(pawn) then S.doReadyAt = nil return end
+    S.doReadyAt = S.doReadyAt or (os.clock() + 3)
+    if os.clock() < S.doReadyAt then return end
+    for _ = 1, 4 do
+        local p = table.remove(S.doQueue, 1)
+        if not p then break end
+        S.applyDoor(p)
+    end
+end)
+function S.applyDoor(p)
     local name, locked, open, side = p[1], p[2] == "1", p[3] == "1", p[4] == "1"
     for _, d in ipairs(S.allOf(DOOR_CLASS)) do
         if d:GetFName():ToString() == name then

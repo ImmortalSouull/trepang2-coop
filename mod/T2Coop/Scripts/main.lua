@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.6"
+local VERSION = "0.9.7"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4372,6 +4372,45 @@ S.every(250, function()
         pcall(function() pawn.PlayerHud:SetRenderOpacity(cine and 0 or 1) end)
     end
 end)
+
+---------------------------------------------------------------------------
+-- Flashlights (key T): BasePlayer.bPlayerFlashlightOn, FlashlightOn()/FlashlightOff(). Each machine
+-- watches its own; client -> host "FL|1/0" (the host switches that partner's body and passes
+-- "FL|pid|1/0" on), the host's own goes to every client. In dark levels you see your partner's beam.
+---------------------------------------------------------------------------
+do
+local function setLight(pawn, on)
+    if not valid(pawn) then return end
+    if (pawn.bPlayerFlashlightOn and true or false) == on then return end
+    pcall(function() if on then pawn:FlashlightOn() else pawn:FlashlightOff() end end)
+end
+S.flSent = nil
+S.every(200, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local pawn = S.joined and S.client and S.client.pawn
+    if not S.joined then local pc = localPC(); pawn = valid(pc) and pc.Pawn or nil end
+    if not valid(pawn) then return end
+    local on = pawn.bPlayerFlashlightOn and true or false
+    -- on change, and again every 5 s (newcomers, reconnects)
+    if on == S.flSent and os.clock() - (S.flAt or 0) < 5 then return end
+    S.flSent, S.flAt = on, os.clock()
+    if S.joined then S.toServer("FL", on and 1 or 0)
+    else S.toClients("FL", pidOf(pawn) or -1, on and 1 or 0) end
+end)
+handlers.server["FL"] = function(pc, p)
+    local on = p[1] == "1"
+    setLight(pc.Pawn, on)
+    local pid = pidOf(pc.Pawn)
+    for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+        if pid and valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+            S.toClient(other, "FL", pid, on and 1 or 0)
+        end
+    end
+end
+handlers.client["FL"] = function(_, p)
+    setLight(S.bodyOf(tonumber(p[1])), p[2] == "1")
+end
+end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).
 function S.walk(seconds)

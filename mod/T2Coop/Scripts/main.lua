@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.7"
+local VERSION = "0.9.8"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4410,6 +4410,62 @@ end
 handlers.client["FL"] = function(_, p)
     setLight(S.bodyOf(tonumber(p[1])), p[2] == "1")
 end
+end
+
+---------------------------------------------------------------------------
+-- Slow-mo (Q). The host's slow-mo slows the whole server world and the engine passes that time
+-- dilation on to every client: time slows for everybody. A client's own slow-mo never starts (the
+-- game switches it on through the server, which doesn't know the client's local pawn). So the mod
+-- reads the client's Q itself and asks the host ("SM"): the host slows the world for everyone for
+-- 5 s (a second Q ends it early; 10 s cooldown per partner).
+---------------------------------------------------------------------------
+do
+local SM_FACTOR, SM_TIME, SM_COOLDOWN = 0.35, 5, 10
+S.smKeyWas = false
+S.every(30, function()
+    if not S.joined or not netDriver() then return end
+    local pc = localPC()
+    if not valid(pc) or S.inputBlock and S.inputBlock.on then return end
+    S.SMKEYS = S.SMKEYS or { { KeyName = FName("Q", EFindName.FNAME_Add) }, { KeyName = FName("Gamepad_LeftShoulder", EFindName.FNAME_Add) } }
+    local down = false
+    for _, k in ipairs(S.SMKEYS) do
+        local ok, d = pcall(function() return pc:IsInputKeyDown(k) end)
+        if ok and d then down = true end
+    end
+    if down and not S.smKeyWas then S.toServer("SM") end
+    S.smKeyWas = down
+end)
+S.smActive = {}   -- host: controller name -> { untilT, nextT }
+handlers.server["SM"] = function(pc)
+    local key = pc:GetFName():ToString()
+    local e = S.smActive[key] or { untilT = 0, nextT = 0 }
+    S.smActive[key] = e
+    local now = os.clock()
+    if now < e.untilT then
+        e.untilT = now                         -- second press: end it
+    elseif now >= e.nextT then
+        e.untilT, e.nextT = now + SM_TIME, now + SM_TIME + SM_COOLDOWN
+        log("partner slow-mo")
+    end
+end
+S.smApplied = false
+S.every(100, function()
+    if not S.hosting or not netDriver() then return end
+    local now, on = os.clock(), false
+    for _, e in pairs(S.smActive) do if now < e.untilT then on = true end end
+    local w = world()
+    if not valid(w) then return end
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    local hp = valid(localPC()) and localPC().Pawn or nil
+    local hostOwn = valid(hp) and hp.bIsSlowMoActive
+    if on and not hostOwn then
+        if math.abs(GS:GetGlobalTimeDilation(w) - SM_FACTOR) > 0.01 then pcall(function() GS:SetGlobalTimeDilation(w, SM_FACTOR) end) end
+        S.smApplied = true
+    elseif S.smApplied and not on then
+        S.smApplied = false
+        if not hostOwn then pcall(function() GS:SetGlobalTimeDilation(w, 1.0) end) end
+    end
+end)
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

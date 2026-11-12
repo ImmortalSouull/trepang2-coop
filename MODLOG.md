@@ -465,6 +465,11 @@
 88. **Модификации оружия и парное оружие у напарника (v0.9.18)** — `UnlockedWeaponCustomizations` (UClass'ы) →
     `PG|C|класс` → клиент `gi:UnlockWeaponCustomization(cls)`; `DualWieldUnlocked` → `PG|D|dual` → поле = true;
     затем SaveUnlocks. Проверка: у B очистить в памяти (Empty / false) до входа → после входа 21/true, как у хоста.
+89. **Хост падал на сайд-миссии BadOil при входе гостя во вражеском облике (v0.9.19)** — `wearCostume` создавал
+    NPC-костюм на 5000 ед. НИЖЕ игрока: на BadOil это ниже KillZ → движок убивал NPC → падение в
+    `SnapshotPose` (поза смерти; стек через хук UE4SS, чтение 0x0). Теперь +3000 (выше). Проверка: открыть сайд-миссию
+    одному, F4 HOST (`T2C.onKey("host")`), вход B — scratchpad sidetest.ps1. Внимание: `T2C.netDriver` не
+    существует (локальная функция) — проверять `FindAllOf("IpNetDriver")` / netstat.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

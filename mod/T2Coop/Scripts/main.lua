@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.18"
+local VERSION = "0.9.19"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -2308,7 +2308,9 @@ local function wearCostume(p, id)
     if not cls then log("enemy outfit " .. id .. ": class not found") return false end
     GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
     local l = p:K2_GetActorLocation()
-    local xf = { Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Translation = { X = l.X, Y = l.Y, Z = l.Z - 5000 }, Scale3D = { X = 1, Y = 1, Z = 1 } }
+    -- (above us: 5000 below was under some maps' kill height - the engine killed the costume NPC
+    -- and the host crashed in its death pose snapshot, e.g. side mission BadOil)
+    local xf = { Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Translation = { X = l.X, Y = l.Y, Z = l.Z + 3000 }, Scale3D = { X = 1, Y = 1, Z = 1 } }
     local a = GS:BeginDeferredActorSpawnFromClass(world(), cls, xf, 1, nil)
     if not valid(a) then return false end
     pcall(function() a.AutoPossessAI = 0 end)          -- no AI controller

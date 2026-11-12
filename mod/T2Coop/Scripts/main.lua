@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.24"
+local VERSION = "0.9.25"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -711,6 +711,10 @@ local function fixClientController()
     end
 
     local puppet = pc.Pawn
+    -- (our old pawn destroyed by the engine, see the fall rescue: the controller still points at it)
+    local dying = false
+    pcall(function() dying = valid(puppet) and puppet:IsActorBeingDestroyed() end)
+    if (dying or not valid(puppet)) and valid(c.puppet) then puppet = c.puppet end
     if not valid(puppet) or not c.spawn then return end   -- wait for the host's spawn point
     -- Give the new map a moment: spawning our pawn right away sometimes crashed inside its
     -- animation blueprint's setup (it reads things from the controller that weren't ready yet).
@@ -4872,6 +4876,39 @@ handlers.server["PN"] = function(pc, p)
 end
 handlers.client["PN"] = function(_, p) showPing(p[1] or "PING", vec(p, 2), p[5] == "1") end
 end
+
+-- Partner fell through the floor / off the map. Below the level's KillZ the engine destroys our
+-- (local) pawn: the game was left in a white void and crashed on the next move. So: a long fall or
+-- getting near KillZ - back to the host; a pawn the engine destroyed anyway - a fresh one next to
+-- the host (the spawn code makes it once S.client.pawn is gone).
+S.every(250, function(dt)
+    local p = S.client and S.client.pawn
+    if not S.joined or not netDriver() or not valid(p) then S.fallMs = 0 return end
+    if S.cut and S.cut.active then S.fallMs = 0 return end
+    local gone = false
+    pcall(function() gone = p:IsActorBeingDestroyed() end)
+    if gone then
+        log("our pawn was destroyed (fell out of the world) - a new one next to the host")
+        S.client.pawn = nil
+        S.toServer("TH")
+        S.fallMs = 0
+        return
+    end
+    local z, mode
+    pcall(function() z = p:K2_GetActorLocation().Z; mode = p.CharacterMovement.MovementMode end)
+    if not z then return end
+    if S.killZLevel ~= S.clientLevel then
+        S.killZLevel, S.killZ = S.clientLevel, -1048575
+        pcall(function() S.killZ = FindFirstOf("WorldSettings").KillZ end)
+    end
+    S.fallMs = (mode == 3) and ((S.fallMs or 0) + dt) or 0
+    if (z < (S.killZ or -1048575) + 3000 or S.fallMs > 10000) and os.clock() - (S.rescueAt or -99) > 6 then
+        S.rescueAt, S.fallMs = os.clock(), 0
+        log(string.format("falling out of the map (z %.0f) - back to the host", z))
+        S.toServer("TH")
+        S.notify(S.isRussian() and "CO-OP: вы выпали за карту - переносим к хосту" or "CO-OP: you fell off the map - moving you to the host")
+    end
+end)
 
 -- "TO THE HOST" (F4): the host sends that partner a fresh spawn point next to itself ("S").
 handlers.server["TH"] = function(pc)

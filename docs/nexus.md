@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.9.4
+0.9.5
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)

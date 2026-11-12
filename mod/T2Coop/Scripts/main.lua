@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.4"
+local VERSION = "0.9.5"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1781,7 +1781,7 @@ end
 -- grenades and, when one is gone (exploded), tells the host where; the host applies the same
 -- radial damage there on the partner's behalf (players are not hurt).
 ---------------------------------------------------------------------------
-S.myGrenades = {}
+S.myGrenades, S.grenDone = {}, {}
 S.every(100, function()
     if not S.joined or not netDriver() then return end
     local mine = S.client.pawn
@@ -1791,7 +1791,7 @@ S.every(100, function()
         if pj.Role == 3 then
             local key = pj:GetFullName()
             local g = S.myGrenades[key]
-            if not g then
+            if not g and not S.grenDone[key] then
                 local inst = pj.Instigator
                 local ok, radius = pcall(function() return pj.GrenadeDamageRadius end)
                 if valid(inst) and inst:GetFullName() == myName and ok and type(radius) == "number" and radius > 0 then
@@ -1804,12 +1804,16 @@ S.every(100, function()
         end
     end
     for key, g in pairs(S.myGrenades) do
-        if not valid(g.actor) or (g.actor.IsActorBeingDestroyed and g.actor:IsActorBeingDestroyed()) then
+        -- exploded: the mesh goes invisible at once (the actor itself lingers ~20 s for sound/FX)
+        local gone = not valid(g.actor)
+        if not gone then pcall(function() gone = not g.actor.Mesh:IsVisible() end) end
+        if gone then
             if g.pos then
                 S.toServer("EX", fmtVec(g.pos), string.format("%.1f|%.1f|%.1f", g.base or 100, g.min or 0, g.radius), g.dmgCls or "")
                 S.stats.exSent = (S.stats.exSent or 0) + 1
             end
             S.myGrenades[key] = nil
+            S.grenDone[key] = true
         end
     end
 end)

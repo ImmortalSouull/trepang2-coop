@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.11"
+local VERSION = "0.9.12"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1158,6 +1158,35 @@ end
 handlers.client["NT"] = function(_, p) S.notify(p[1] or "") end
 handlers.client["RV"] = function() local p = myPawn(); if valid(p) and me.down then setDown(p, false) end end
 
+-- Everyone's health on their marker: each player reports its own ("HP|pct|down", the host passes
+-- "HP|pid|pct|down" on) on change and every 5 s.
+S.hpOf = {}
+S.every(1000, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local p = myPawn()
+    if not valid(p) then return end
+    local pct = math.max(0, math.min(100, math.floor((tonumber(p.Health) or 0) / (me.max or 200) * 100 + 0.5)))
+    local key = pct .. (me.down and "d" or "")
+    if key == S.hpSent and os.clock() - (S.hpAt or 0) < 5 then return end
+    S.hpSent, S.hpAt = key, os.clock()
+    if S.joined then S.toServer("HP", pct, me.down and 1 or 0)
+    elseif #(FindAllOf("PlayerController") or {}) > 1 then S.toClients("HP", pidOf(p) or -1, pct, me.down and 1 or 0) end
+end)
+handlers.server["HP"] = function(pc, p)
+    local pid = pidOf(pc.Pawn)
+    if not pid then return end
+    S.hpOf[pid] = { pct = tonumber(p[1]) or 100, down = p[2] == "1" }
+    for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+            S.toClient(other, "HP", pid, p[1], p[2])
+        end
+    end
+end
+handlers.client["HP"] = function(_, p)
+    local pid = tonumber(p[1])
+    if pid then S.hpOf[pid] = { pct = tonumber(p[2]) or 100, down = p[3] == "1" } end
+end
+
 -- Spectating while down: 2 s after going down the camera moves to a partner (left mouse button
 -- switches between them and yourself); back to your own eyes when you're revived.
 S.spec = { on = false, since = nil, lmb = false, self = false }
@@ -1660,6 +1689,13 @@ local function otherPlayers()
 end
 local function labelFor(p)
     local name = S.playerName(p) or "PARTNER"
+    -- health / down as that player reports it ("HP")
+    local st = S.hpOf and S.hpOf[pidOf(p) or -99]
+    if st then
+        if st.down then return name .. " - DOWN" end
+        if st.pct < 100 then return name .. "  " .. st.pct .. "%" end
+        return name
+    end
     if not S.hosting then return name end
     for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
         if valid(pc) and not pc:IsLocalController() and valid(pc.Pawn) and pc.Pawn:GetFullName() == p:GetFullName() then
@@ -1695,7 +1731,7 @@ S.every(1000, function()
         end
         if e and valid(e.icon) then
             local label = labelFor(p)
-            S.partnerName = (label:gsub(" %- DOWN$", ""))
+            S.partnerName = (label:gsub("  %d+%%$", ""):gsub(" %- DOWN$", ""))
             if label ~= e.label then
                 e.label = label
                 pcall(function() e.icon:HackOverrideSubtitle(FText(label)) end)

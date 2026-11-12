@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.9.11
+0.9.12
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -55,7 +55,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*]Partners' and the host's shots are seen and heard by everyone (gun animation, sound, muzzle flash). Flashlights too: in a dark level you see your partner's beam.
 [*][b]Slow-mo for everyone[/b]: when the host or a partner uses slow-mo (Q), time slows down for all players together (a partner's lasts 5 s, Q again ends it).
 [*][b]Invisibility (E) works in co-op[/b]: an invisible partner disappears for everyone (body, enemy look and gun) and the enemies stop seeing them.
-[*]Steam names over partner markers (with distance, visible through walls), "joined" / "left" notices.
+[*]Steam names over partner markers (with distance, visible through walls) with their health ("Name 60%", "Name - DOWN"), "joined" / "left" notices.
 [*]Tested with 3 players; works with more.
 [/list]
 

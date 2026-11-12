@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.8"
+local VERSION = "0.9.9"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4466,6 +4466,55 @@ S.every(100, function()
         if not hostOwn then pcall(function() GS:SetGlobalTimeDilation(w, 1.0) end) end
     end
 end)
+end
+
+---------------------------------------------------------------------------
+-- Invisibility (E): BasePlayer.bIsInvisActive. A client's runs only on its own pawn, so the enemies
+-- (on the host) kept seeing and shooting its body. Each machine watches its own; client -> host
+-- "IV|1/0" (the host switches that partner's body: SetIsInvisActive + the look, and passes
+-- "IV|pid|1/0" on), the host's own goes to every client.
+---------------------------------------------------------------------------
+do
+local function setInvis(pawn, on)
+    if not valid(pawn) then return end
+    -- (the body's own invisibility may already have run out by itself: the look below is applied anyway)
+    if (pawn.bIsInvisActive and true or false) ~= on then
+        pcall(function() pawn:SetIsInvisActive(on) end)
+        pcall(function() if on then pawn:BPStartInvis() else pawn:BPStopInvis() end end)
+    end
+    -- an enemy look is a separate actor on the body: hide it too
+    pcall(function()
+        local c = S.costumes[pawn:GetFullName()]
+        if c and valid(c.actor) then c.actor:SetActorHiddenInGame(on) end
+    end)
+    -- and the gun in their hands (it would float in the air)
+    pcall(function() if valid(pawn.CurrentWeapon) then pawn.CurrentWeapon:SetActorHiddenInGame(on) end end)
+end
+S.ivSent = false
+S.every(100, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    local pawn = S.joined and S.client and S.client.pawn
+    if not S.joined then local pc = localPC(); pawn = valid(pc) and pc.Pawn or nil end
+    if not valid(pawn) then return end
+    local on = pawn.bIsInvisActive and true or false
+    if on == S.ivSent then return end
+    S.ivSent = on
+    if S.joined then S.toServer("IV", on and 1 or 0)
+    elseif #(FindAllOf("PlayerController") or {}) > 1 then S.toClients("IV", pidOf(pawn) or -1, on and 1 or 0) end
+end)
+handlers.server["IV"] = function(pc, p)
+    local on = p[1] == "1"
+    setInvis(pc.Pawn, on)
+    local pid = pidOf(pc.Pawn)
+    for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+        if pid and valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+            S.toClient(other, "IV", pid, on and 1 or 0)
+        end
+    end
+end
+handlers.client["IV"] = function(_, p)
+    setInvis(S.bodyOf(tonumber(p[1])), p[2] == "1")
+end
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

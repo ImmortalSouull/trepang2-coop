@@ -403,6 +403,11 @@
     совпадает с трассой самого гостя (scratchpad aimtp.lua + aimdo.lua + ctrace.lua; «за спиной врага» часто ставит
     в стену — целиться спереди и в следующем кадре после телепорта); перезапуск арены, когда все ранены, +
     переподключение гостя; 3 игрока; меню блокируют управление; наблюдение. Новых ошибок нет.
+74. **Сквозной цикл кампании (2026-11-12)** — KillCultists: хост `Trepang End Level(w, true,
+    FName("/Game/Maps/Campaign/SafeHouse/SafeHouse_Persistent"), nil)` → убежище, гость следом; в убежище
+    `SafehouseMissionSelected(Mission_Ghosts_C)` + `BP_HelicopterStartMission_C:SetMissionReady/StartMissionSequence` →
+    KillGhosts, гость следом. С FName("None") игра уходит в главное меню (хостинг корректно останавливается).
+    Удалить один элемент TArray из Lua (`RemoveAt`) нельзя — index out of range.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

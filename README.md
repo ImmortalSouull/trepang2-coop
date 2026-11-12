@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.9.21 (alpha)** — download it from [Releases](../../releases).
+**Current version: v0.9.22 (alpha)** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -20,7 +20,7 @@ Notes for every version are in [docs/releases](docs/releases).
 ## Play
 Everything is in one menu: press **F4** (main menu or in a level).
 HOST, NEXT ARENA (Horde), JOIN (type the address), LEAVE, players, network mode (IP / Steam),
-Steam invite, ENEMY HEALTH (tougher enemies for more players), and LOOK - your look for the others (safehouse outfit or any of ~330 enemy variants
+Steam invite, ENEMY HEALTH (tougher enemies for more players), and LOOK - your look for the others (safehouse outfit or any of 300 enemy variants
 in 30 factions) with a turning preview of it.
 
 Over the internet the host needs **UDP port 7777** open, or both players use Porthole / Radmin VPN / ZeroTier.
@@ -63,6 +63,7 @@ the story for everyone - and story objective markers show for every player.
 - Every side mission and all 47 Horde arenas checked with a partner; partners get back in on their own after an arena change.
 - Steam mode works (it used to ask for a restart forever); better sync over VPN / the internet (higher network speed).
 - F4 menu in three short tabs: CO-OP, LOOK, EXTRAS.
+- Enemy looks that froze the game (28 of 328) are left out; the F4 LOOK preview no longer crashes co-op games.
 - EXTRAS (optional, each player sets their own, off = the game as it is): health regen up to 50/75/100%, max armor 100/200/300, auto resupply (ammo, grenade, focus every 60/30 s), resupply on kill, heal on execution, keep your weapon mods on guns you pick up, remember cheats between game launches, randomizer (weapon mods and colours).
 - F6 quick access: weapon mods anywhere; in the safehouse missions, outfit, combat simulator, cheats; in Horde the shop.
 

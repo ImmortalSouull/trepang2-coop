@@ -505,6 +505,19 @@
     BP_SafehouseMissionMapInteract:InteractWithMissionMap, BP_SafeHouseCustomizeInteract / BP_SafehouseScreen_Cheats
     (их BndEvt__..OnInteractDelegate, ищем через ForEachFunction), BP_SafeHouseCombatSimulatorInteract:
     InteractCombatSimulator, BP_HordeBuyZone:ShowMenu (у гостя тоже).
+96. **Облики врагов, вешающие игру (v0.9.22)** — отзыв с Nexus: часть обликов в F4 вешала игру. 28 классов NPC
+    (Hazmat, SSF, рабочие нефтевышки, часть TF63 и др.) навсегда зависают в синхронном LoadAsset (стек: GetAsset,
+    tools/hangstack.py). Найдено перебором всех 328 обликов, каждый перепроверен в свежей игре (контрольный облик
+    прошёл). Они во встроенном списке S.badSkin. Страховка: loadObj пишет Mods/T2Coop/loading.txt перед
+    LoadAsset и удаляет после; если при запуске файл есть — облик заносится в bad_looks.txt. Сохранённый плохой
+    облик сбрасывается на свой наряд (одно уведомление).
+97. **Падение обеих игр после ~7 открытий LOOK в коопе (v0.9.22)** — рендер-поток (DrawSceneCommand) после
+    многократного создания/удаления SceneCapture2D + NPC-фигуры + света. Соло и без превью не воспроизводится.
+    Скрытие оружия NPC вместо удаления и удаление камеры первой не помогли. Помогло: при закрытии меню превью
+    только ставится на паузу (S.previewPause: bCaptureEveryFrame=false, картинка прозрачная), при открытии с тем
+    же обликом — просыпается. 16 повторов — 0 падений; долгий прогон в коопе по всем 300 обликам (оба игрока
+    надевают облик, LOOK, ходьба, стрельба; scratchpad coopsweep.ps1): 299/300 без проблем, одно падение обеих
+    игр (хост первым, AV) на NPC_HECU_AR2 — при 3 повторах этого облика в свежих играх не повторилось.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

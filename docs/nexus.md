@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.9.21
+0.9.22
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -51,7 +51,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Players[/b][/size]
 [list]
-[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player. Or [b]dress up as an enemy[/b]: in the F4 menu pick any of about 330 enemy variants from 30 factions (Mall Cops, Cultists, Horizon guards / elite / TTMF with night vision / Black Ops, Hazmats, Bad Oil bandits, Lawyer Thugs, Replicas, 107 and more) - with a turning preview of how the others will see you. Real enemy gear, everyone sees it.
+[*][b]Your look is shared[/b]: every player appears exactly as they dressed in the safehouse - the game's own outfits (106, Patriarch, 107 and the others you unlocked) and the customization (jacket, gloves, pants, shoes, colours and camo). Change it at the safehouse station like in single player. Or [b]dress up as an enemy[/b]: in the F4 menu pick any of 300 enemy variants from about 30 factions (Mall Cops, Cultists, Horizon guards / elite / TTMF with night vision / Black Ops, Bad Oil bandits, Lawyer Thugs, Replicas, 107 and more) - with a turning preview of how the others will see you. Real enemy gear, everyone sees it.
 [*][b]Fully animated partners[/b]: walking, sprinting, crouching, sliding, jumping, dropkick, aiming up and down, the right grip for every weapon, dual wielding - and reloading, weapon melee strikes (also on enemies on the ground), grenade throws and weapon switches.
 [*]Partners' and the host's shots are seen and heard by everyone (gun animation, sound, muzzle flash). Flashlights too: in a dark level you see your partner's beam.
 [*][b]Slow-mo for everyone[/b]: when the host or a partner uses slow-mo (Q), time slows down for all players together (a partner's lasts 5 s, Q again ends it).

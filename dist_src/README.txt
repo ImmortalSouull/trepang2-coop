@@ -24,7 +24,8 @@ Press F4 in the game (main menu or in a level) - the co-op menu opens.
   LOOK        - your look for the others: safehouse outfit, or any enemy (about 330 variants
                 in 30 factions: arrows = faction / variant), with a turning preview.
 
-Everything is in the F4 menu (there are no other co-op keys).
+Everything is in the F4 menu. One extra key: X (gamepad d-pad left) - ping: a marker with your name
+where you look, seen by everyone for 8 seconds.
 
 CONNECTING OVER THE INTERNET
 ----------------------------

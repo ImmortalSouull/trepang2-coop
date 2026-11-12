@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.10"
+local VERSION = "0.9.11"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4523,6 +4523,90 @@ end
 handlers.client["IV"] = function(_, p)
     setInvis(S.bodyOf(tonumber(p[1])), p[2] == "1")
 end
+end
+
+---------------------------------------------------------------------------
+-- Ping (X / gamepad d-pad left): a marker with your name where you look, for everyone, 8 s.
+-- Client -> host "PN|name|x|y|z"; the host shows it and passes it on; the host's own goes to all.
+-- The marker is the game's objective icon (distance, through walls). One per player at a time.
+---------------------------------------------------------------------------
+do
+local PING_TIME = 8
+S.pings = {}   -- name -> { icon, untilT }
+local function showPing(name, loc)
+    local old = S.pings[name]
+    if old and valid(old.icon) then pcall(function() old.icon:K2_DestroyActor() end) end
+    S.pings[name] = nil
+    pcall(function()
+        local cls = classOf(ICON_CLASS)
+        if not valid(cls) then return end
+        local icon = world():SpawnActor(cls, loc, { Pitch = 0, Yaw = 0, Roll = 0 })
+        if not valid(icon) then return end
+        icon.OwningPlayer = localPC()
+        S.modIcons[icon:GetFullName()] = true
+        pcall(function() icon:Sickle_ShowIcon() end)
+        pcall(function() icon:HackOverrideSubtitle(FText(name)) end)
+        S.pings[name] = { icon = icon, untilT = os.clock() + PING_TIME }
+    end)
+end
+S.showPing = showPing
+S.every(500, function()
+    for name, e in pairs(S.pings) do
+        if not valid(e.icon) or os.clock() > e.untilT then
+            if valid(e.icon) then pcall(function() e.icon:K2_DestroyActor() end) end
+            S.pings[name] = nil
+        end
+    end
+end)
+local function myPingName()
+    local n = S.getMyName and S.getMyName() or nil
+    return ((n and n ~= "") and n or "PING"):gsub("|", "/")
+end
+S.pingKeyWas = false
+S.every(50, function()
+    if not (S.hosting or S.joined) or not netDriver() then return end
+    if S.inputBlock and S.inputBlock.on then return end
+    local pc = localPC()
+    if not valid(pc) then return end
+    S.PINGKEYS = S.PINGKEYS or { { KeyName = FName("X", EFindName.FNAME_Add) }, { KeyName = FName("Gamepad_DPad_Left", EFindName.FNAME_Add) } }
+    local down = false
+    for _, k in ipairs(S.PINGKEYS) do
+        local ok, d = pcall(function() return pc:IsInputKeyDown(k) end)
+        if ok and d then down = true end
+    end
+    if down and not S.pingKeyWas then
+        -- where we look: the first thing the camera ray hits (or 60 m ahead)
+        local ok, loc = pcall(function()
+            local cam = pc.PlayerCameraManager:GetCameraLocation()
+            local rot = pc.PlayerCameraManager:GetCameraRotation()
+            local KML = StaticFindObject("/Script/Engine.Default__KismetMathLibrary")
+            local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+            local f = KML:GetForwardVector(rot)
+            local to = { X = cam.X + f.X * 6000, Y = cam.Y + f.Y * 6000, Z = cam.Z + f.Z * 6000 }
+            local hit, col = {}, { R = 1, G = 0, B = 0, A = 1 }
+            local me = S.joined and S.client and S.client.pawn or pc.Pawn
+            local blocked = KSL:LineTraceSingle(world(), cam, to, 0, false, { me }, 0, hit, true, col, col, 0)
+            if blocked then return hit.ImpactPoint end
+            return to
+        end)
+        if ok and loc then
+            local p = { X = loc.X, Y = loc.Y, Z = loc.Z + 40 }
+            local name = myPingName()
+            showPing(name, p)
+            if S.joined then S.toServer("PN", name, fmtVec(p)) else S.toClients("PN", name, fmtVec(p)) end
+        end
+    end
+    S.pingKeyWas = down
+end)
+handlers.server["PN"] = function(pc, p)
+    showPing(p[1] or "PING", vec(p, 2))
+    for _, other in ipairs(FindAllOf("PlayerController") or {}) do
+        if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
+            S.toClient(other, "PN", p[1], p[2], p[3], p[4])
+        end
+    end
+end
+handlers.client["PN"] = function(_, p) showPing(p[1] or "PING", vec(p, 2)) end
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

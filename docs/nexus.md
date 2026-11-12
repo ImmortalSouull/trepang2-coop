@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.9.10
+0.9.11
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -75,7 +75,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Controls[/b][/size]
 [list]
-[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look, enemy health. Everything is there - no other keys.
+[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look, enemy health.
+[*][b]X[/b] (gamepad: d-pad left) - ping: a marker with your name where you look, for everyone, 8 seconds.
 [/list]
 
 [size=4][b]Known issues (beta)[/b][/size]

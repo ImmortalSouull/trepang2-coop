@@ -22,6 +22,7 @@ Expand-Archive $ue.FullName "$stage\files" -Force          # -> files\dwmapi.dll
 Copy-Item "$proj\mod\T2Coop\Scripts\main.lua" "$stage\files\Mods\T2Coop\Scripts\"
 & python -I "$PSScriptRoot\build_steamdll.py" | Out-Null
 Copy-Item "$proj\mod\T2Coop\t2coop_steam.dll" "$stage\files\Mods\T2Coop\"
+Copy-Item "$proj\mod\T2Coop\fixini.ps1" "$stage\files\Mods\T2Coop\"
 
 New-Item -ItemType Directory -Force "$proj\dist" | Out-Null
 $zip = "$proj\dist\$name.zip"

@@ -478,6 +478,33 @@
     Проверено: все 9 карт — хост через F4, вход гостя, гость рядом, без падений/зависаний. Выключатель `T2C.off.dress`.
 91. **F4 HOST на картах кампании (2026-11-12, v0.9.20)** — зайти одному, F4 HOST, вход гостя: Prologue, KillMothman,
     KillCultists, KillGhosts, KillHorizon — гость рядом с хостом, без падений/зависаний (scratchpad sidetest.ps1).
+92. **Steam-режим просил перезапуск бесконечно (v0.9.21)** — игра при выходе пишет Engine.ini ИЗ ПАМЯТИ: удалённая
+    нами строка `DefaultPlatformService=Null` возвращалась. Теперь при смене режима мод запускает
+    `Mods/T2Coop/fixini.ps1` (скрытый powershell через os.execute): ждёт, пока все CPPFPS-Win64-Shipping закроются,
+    и ставит режим в Engine.ini. Проверено: steam → выход → строки нет → запуск iniOk=true, хост = SteamNetDriver;
+    обратно ip → Null вернулась.
+93. **Скорость сети (v0.9.21)** — по умолчанию MaxInternetClientRate 10000 Б/с, 30 обновлений/с: через VPN/интернет
+    рассинхрон. Хост раз в 2 с: NetDriver MaxClientRate/MaxInternetClientRate = net_rate (config, 200000),
+    NetServerMaxTickRate 60, каждому `pc.NetConnection.CurrentNetSpeed`; клиент: `netspeed N` + ServerConnection.
+94. **Переподключение после смены арены (v0.9.21)** — попытка, сделанная пока хост ещё грузится, оставляет игру в
+    состоянии, где `open <ip>` больше ничего не делает (16 попыток подряд). LEAVE (OpenLevel меню, S.joined=false)
+    и JOIN через 10 с — входит всегда. Теперь со 2-й попытки так и делаем (S.rejoinMenuAt), пауза 15 с.
+    Проверка: 7 смен арен подряд, гость каждый раз вернулся. Все 47 арен: вход гостя рядом с хостом.
+    Автоперенос к хосту сбрасывается при смене уровня (новая точка старта — не «скачок»).
+95. **F4 по вкладкам + EXTRAS + F6 (v0.9.21)** — меню перестраивается на вкладку (S.menuTab): CO-OP / LOOK / EXTRAS,
+    панель по высоте вкладки. EXTRAS (свои у каждого, Mods/T2Coop/extras.txt): HealthRegenLimit (игра 40 из 200),
+    MaxArmor (50), пополнение (Inventory[i].CurrentAmmo += AmmoPerClip, GrenadeInventory[i].NumGrenades +1 до
+    MaxGrenades, RechargeSlowMo), за убийство (хук PlayerBP_C:BPDamagedOther bKilled; гостю хост шлёт `KL`),
+    лечение за казнь (MyHostage был → пропал и мёртв). Модификации оружия: хук
+    `BaseWeapon:SetWeaponCustomizationOptionActive` (его зовёт меню оружия) → extras_mods.txt, на новое оружие
+    того же класса ставим по индексу. ЧТЕНИЕ `SavedCustomizations` (массив структур с FName) роняет UE4SS
+    (2be607) — не трогать. Номер вне диапазона в SetWeapon...Active безопасен. Читы = cvar из
+    `UBaseCheatObject.ConsoleCommand` (cheat.AllWeaponsADS...): игра их сбрасывает при перезапуске игры;
+    запоминаем ненулевые (extras_cheats.txt) и ставим через 4 с после загрузки уровня. Рандомайзер: ApplyWeaponSkin
+    (AllSkins) + случайные индексы модификаций; оружию врагов случайные скины. F6: BPOpenWeaponCustomizeMenu,
+    BP_SafehouseMissionMapInteract:InteractWithMissionMap, BP_SafeHouseCustomizeInteract / BP_SafehouseScreen_Cheats
+    (их BndEvt__..OnInteractDelegate, ищем через ForEachFunction), BP_SafeHouseCombatSimulatorInteract:
+    InteractCombatSimulator, BP_HordeBuyZone:ShowMenu (у гостя тоже).
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

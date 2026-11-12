@@ -15,7 +15,7 @@ foreach ($t in $targets) {
     New-Item -ItemType Directory -Force "$t\$m\Scripts" | Out-Null
     Copy-Item "$proj\mod\$m\Scripts\*" "$t\$m\Scripts\" -Recurse -Force
     # native helpers (locked while that game copy runs)
-    Get-ChildItem "$proj\mod\$m" -Filter *.dll | ForEach-Object {
+    Get-ChildItem "$proj\mod\$m\*" -Include *.dll,*.ps1 | ForEach-Object {
       try { Copy-Item $_.FullName "$t\$m\" -Force -ErrorAction Stop } catch { "warning: $($_.Exception.Message)" }
     }
   }

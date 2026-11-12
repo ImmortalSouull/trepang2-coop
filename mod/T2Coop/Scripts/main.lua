@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.20"
+local VERSION = "0.9.21"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -217,6 +217,7 @@ end
 function S.leave()
     S.hosting = false
     S.joined = false
+    S.rejoinMenuAt = nil
     openLevel("/Game/Maps/Menu/FrontEndMenuMap", "")
 end
 
@@ -525,6 +526,7 @@ handlers.server["D"] = function(pc, p)
         local horde = FindFirstOf("HordeModeActor_C")
         if valid(horde) then pcall(function() horde:OnPlayerKilledOther(dmg, dmg, npc, true, false, nil) end) end
         S.stats.partnerKills = (S.stats.partnerKills or 0) + 1
+        pcall(function() S.toClient(pc, "KL") end)
     end
 end
 
@@ -1307,20 +1309,40 @@ end)
 -- Client: if we lose the host (arena restart, network hiccup), keep trying to get back in.
 handlers.client["RJ"] = function() S.rejoin = { at = os.time() + 8, tries = 0 } end
 S.every(1000, function()
+    -- step 2 of a retry: the clean main menu is up - join again
+    if S.rejoinMenuAt then
+        if os.time() >= S.rejoinMenuAt then
+            S.rejoinMenuAt = nil
+            local tries = S.rejoinTries or 1
+            S.join(S.lastIP)
+            S.rejoin = { at = os.time() + 15, tries = tries }
+        end
+        return
+    end
     if not S.joined or not S.lastIP then return end
     if netDriver() then S.rejoin = nil; return end
-    -- first try soon after losing the host, then every 6 s for about 3 minutes
+    -- first try soon after losing the host, then every 15 s for about 4 minutes
     S.rejoin = S.rejoin or { at = os.time() + 4, tries = 0 }
-    if os.time() >= S.rejoin.at and S.rejoin.tries < 30 then
+    if os.time() >= S.rejoin.at and S.rejoin.tries < 16 then
         local tries = S.rejoin.tries + 1
         log("reconnecting to " .. S.lastIP .. " (try " .. tries .. ")")
-        if tries > 3 then   -- (a normal level change takes a few tries while the host loads)
-            S.notify(string.format(S.isRussian() and "CO-OP: хост не отвечает - переподключение (%d/30)"
-                or "CO-OP: the host doesn't answer - reconnecting (%d/30)", tries))
+        if tries > 2 then   -- (a normal level change takes a try or two while the host loads)
+            S.notify(string.format(S.isRussian() and "CO-OP: хост не отвечает - переподключение (%d/16)"
+                or "CO-OP: the host doesn't answer - reconnecting (%d/16)", tries))
+        end
+        if tries >= 2 then
+            -- a try made while the host was still loading leaves this game unable to connect again
+            -- ("open" does nothing, seen after arena changes); a LEAVE - back to a clean main menu -
+            -- and a join 10 s later always gets in
+            S.joined, S.rejoinTries, S.rejoinMenuAt = false, tries, os.time() + 10
+            pcall(openLevel, "/Game/Maps/Menu/FrontEndMenuMap", "")
+            return
         end
         S.join(S.lastIP)            -- resets S.rejoin
-        S.rejoin = { at = os.time() + 6, tries = tries }
-    elseif os.time() >= S.rejoin.at and S.rejoin.tries >= 30 then
+        -- connecting + loading the host's map can take longer than a few seconds; a new "open" before
+        -- it's done cancels it
+        S.rejoin = { at = os.time() + 15, tries = tries }
+    elseif os.time() >= S.rejoin.at and S.rejoin.tries >= 16 then
         -- give up: the host is gone for good
         S.joined, S.rejoin = false, nil
         log("gave up reconnecting")
@@ -1778,10 +1800,12 @@ local function creditPartnerKill(npc, dmg)
     local horde = FindFirstOf("HordeModeActor_C")
     if valid(horde) then pcall(function() horde:OnPlayerKilledOther(dmg, dmg, npc, true, false, nil) end) end
     S.stats.partnerKills = (S.stats.partnerKills or 0) + 1
+    if valid(S.lastHitPc) then pcall(function() S.toClient(S.lastHitPc, "KL") end) end
 end
 S.creditPartnerKill = creditPartnerKill
 
 handlers.server["SH"] = function(pc, p)
+    S.lastHitPc = pc
     local cam, yaw, pitch = vec(p, 1), tonumber(p[4]), tonumber(p[5])
     local shots, wpath = math.min(tonumber(p[6]) or 1, 3), p[7] or ""
     local puppet = pc.Pawn
@@ -4837,6 +4861,10 @@ S.every(250, function()
     if not valid(pawn) then S.hostJump.last = nil return end
     local ok, l = pcall(function() return pawn:K2_GetActorLocation() end)
     if not ok or not l then return end
+    -- a new level (arena change, checkpoint load): the new start isn't a jump
+    local wn = ""
+    pcall(function() wn = pawn:GetFullName():match("%s([^:]+)") or "" end)
+    if S.hostJump.world ~= wn then S.hostJump.world, S.hostJump.last, S.hostJump.at = wn, nil, nil end
     local last = S.hostJump.last
     S.hostJump.last = { X = l.X, Y = l.Y, Z = l.Z }
     if last then
@@ -4868,6 +4896,370 @@ S.every(250, function()
             end)
         end
     end
+end)
+end
+
+---------------------------------------------------------------------------
+-- EXTRAS gameplay (F4 - EXTRAS; each player's own game, own pawn):
+--   regen       health regenerates up to this % of max (the game: 40 of 200)
+--   armor       max armor (the game: 50)
+--   resupply    every N s: a magazine for every gun, a grenade, some focus
+--   killsupply  the same for every kill (host: the game's kill event; partner: "KL" from the host)
+--   execheal    executing a human shield heals this % of max health
+---------------------------------------------------------------------------
+do
+S.xBase = {}   -- the game's own values, per pawn
+local function maxHealth(p)
+    local ok, m = pcall(function() return p:GetMaxHealth() end)
+    return (ok and tonumber(m) and m > 0) and m or 200
+end
+function S.resupply(p, why)
+    if not valid(p) then return end
+    pcall(function()
+        for i = 1, p.Inventory:GetArrayNum() do
+            local w = p.Inventory[i]
+            if valid(w) then
+                local mx, clip = tonumber(w.MaxAmmo) or 0, tonumber(w.AmmoPerClip) or 0
+                local cur = tonumber(w.CurrentAmmo) or 0
+                if mx > 0 and clip > 0 and cur < mx then w.CurrentAmmo = math.min(mx, cur + clip) end
+            end
+        end
+    end)
+    pcall(function()
+        local n, total = p.GrenadeInventory:GetArrayNum(), 0
+        for i = 1, n do total = total + (tonumber(p.GrenadeInventory[i].NumGrenades) or 0) end
+        if n > 0 and total < (tonumber(p.MaxGrenades) or 5) then
+            local i = math.max(1, math.min(n, (tonumber(p.CurrentGrenadeIndex) or 0) + 1))
+            p.GrenadeInventory[i].NumGrenades = (tonumber(p.GrenadeInventory[i].NumGrenades) or 0) + 1
+        end
+    end)
+    pcall(function() p:RechargeSlowMo((tonumber(p.SlowMoDurationMax) or 5) * 0.34) end)
+    S.stats.resupplies = (S.stats.resupplies or 0) + 1
+    if why then log("resupply (" .. why .. ")") end
+end
+S.xNextSupply = nil
+S.every(1000, function()
+    local p = myPawn()
+    if not valid(p) then return end
+    local key = p:GetFullName()
+    local b = S.xBase[key]
+    if not b then
+        b = { lim = tonumber(p.HealthRegenLimit) or 40, armor = tonumber(p.MaxArmor) or 50 }
+        S.xBase = { [key] = b }
+    end
+    pcall(function()
+        local r = S.extraNum("regen")
+        local want = r > 0 and maxHealth(p) * r / 100 or b.lim
+        if math.abs((tonumber(p.HealthRegenLimit) or 0) - want) > 0.5 then p.HealthRegenLimit = want end
+        local a = S.extraNum("armor")
+        local wa = a > 0 and a or b.armor
+        if math.abs((tonumber(p.MaxArmor) or 0) - wa) > 0.5 then
+            p.MaxArmor = wa
+            if (tonumber(p.Armor) or 0) > wa then p.Armor = wa end
+        end
+    end)
+    local every = S.extraNum("resupply")
+    if every <= 0 or me.down then S.xNextSupply = nil return end
+    S.xNextSupply = S.xNextSupply or (os.clock() + every)
+    if os.clock() >= S.xNextSupply then
+        S.xNextSupply = os.clock() + every
+        S.resupply(p, "timer")
+    end
+end)
+-- kills: the host's / single player's own (PlayerBP_C:BPDamagedOther, bKilled); hooks only queue
+S.xKills = 0
+S.xKillHooked = nil
+S.every(1000, function()
+    local p = myPawn()
+    if not valid(p) then return end
+    local cls = p:GetClass()
+    local addr = cls:GetAddress()
+    if S.xKillHooked == addr then return end
+    local path = cls:GetFullName():match("%s(.+)$")
+    local ok = pcall(function()
+        RegisterHook(path .. ":BPDamagedOther", function(self, dmg, dealt, victim, killed)
+            local k = killed and killed:get()
+            if k then S.xKills = S.xKills + 1 end
+        end)
+    end)
+    if ok then S.xKillHooked = addr; log("kill event hooked") end
+end)
+handlers.client["KL"] = function() S.xKills = S.xKills + 1 end
+-- executions: we held a human shield, it's gone and dead
+S.xHostage = nil
+S.every(100, function()
+    if S.xKills > 0 then
+        local n = S.xKills
+        S.xKills = 0
+        if S.extraNum("killsupply") > 0 then for _ = 1, math.min(n, 3) do S.resupply(myPawn()) end end
+    end
+    local pct = S.extraNum("execheal")
+    local p = myPawn()
+    if pct <= 0 or not valid(p) then S.xHostage = nil return end
+    local h
+    pcall(function() h = p.MyHostage end)
+    if valid(h) then S.xHostage = h return end
+    local old = S.xHostage
+    if old then
+        S.xHostage = nil
+        local dead = false
+        pcall(function() dead = (not old:IsValid()) or old.bIsDead or (tonumber(old.Health) or 1) <= 0 end)
+        if dead and not me.down then
+            local m = maxHealth(p)
+            pcall(function() p.Health = math.min(m, (tonumber(p.Health) or 0) + m * pct / 100) end)
+            log("execution heal +" .. pct .. "%")
+        end
+    end
+end)
+end
+
+---------------------------------------------------------------------------
+-- EXTRAS: weapons and cheats.
+--   keepmods    the weapon mods you pick (the game's weapon menu calls BaseWeapon:
+--               SetWeaponCustomizationOptionActive(category, option)) are remembered per gun type
+--               and put on every gun of that type you pick up (Mods/T2Coop/extras_mods.txt).
+--               (Reading a gun's mods from Lua crashes UE4SS - arrays of structs with names - so we
+--               only listen to the changes and set them by index.)
+--   keepcheats  cheats are console variables (UBaseCheatObject.ConsoleCommand, e.g. cheat.AllWeaponsADS);
+--               the ones you turn on are put back after every level load (extras_cheats.txt).
+--   random      every gun you pick up gets random mods and a random colour; enemies' guns random colours.
+---------------------------------------------------------------------------
+do
+local MODS_PATH = "ue4ss/Mods/T2Coop/extras_mods.txt"
+local CHEATS_PATH = "ue4ss/Mods/T2Coop/extras_cheats.txt"
+S.xMods = {}      -- weapon class path -> { [category] = option }
+S.xCheats = {}    -- cvar -> value
+pcall(function()
+    local f = io.open(MODS_PATH, "r")
+    if not f then return end
+    for line in f:lines() do
+        local cls, c, i = line:match("^([^|]+)|(%d+)|(%d+)$")
+        if cls then S.xMods[cls] = S.xMods[cls] or {}; S.xMods[cls][tonumber(c)] = tonumber(i) end
+    end
+    f:close()
+end)
+pcall(function()
+    local f = io.open(CHEATS_PATH, "r")
+    if not f then return end
+    for line in f:lines() do
+        local k, v = line:match("^([^=%s]+)=([%d%.%-]+)$")
+        if k then S.xCheats[k] = tonumber(v) end
+    end
+    f:close()
+end)
+local function saveMods()
+    local f = io.open(MODS_PATH, "w")
+    if not f then return end
+    for cls, t in pairs(S.xMods) do for c, i in pairs(t) do f:write(cls .. "|" .. c .. "|" .. i .. "\n") end end
+    f:close()
+end
+local function saveCheats()
+    local f = io.open(CHEATS_PATH, "w")
+    if not f then return end
+    for k, v in pairs(S.xCheats) do f:write(k .. "=" .. tostring(v) .. "\n") end
+    f:close()
+end
+
+-- the game's weapon menu -> remembered mods (hook only queues)
+S.xModQueue = {}
+S.xApplying = false
+pcall(function()
+    RegisterHook("/Script/CPPFPS.BaseWeapon:SetWeaponCustomizationOptionActive", function(self, c, i, a)
+        if S.xApplying then return end
+        local ok, e = pcall(function() return { w = self:get(), c = c:get(), i = i:get(), a = a:get() } end)
+        if ok and e and #S.xModQueue < 50 then table.insert(S.xModQueue, e) end
+    end)
+end)
+S.xSeen = {}   -- weapon full name -> time we first saw it in our hands
+S.xSeenN = 0
+local function setMod(w, c, i)
+    S.xApplying = true
+    pcall(function() w:SetWeaponCustomizationOptionActive(c, i, true, true) end)
+    S.xApplying = false
+end
+S.every(250, function()
+    -- remember what the player picked
+    while #S.xModQueue > 0 do
+        local e = table.remove(S.xModQueue, 1)
+        local p = myPawn()
+        pcall(function()
+            if e.a and valid(e.w) and valid(p) and same(e.w.Owner, p) then
+                local seen = S.xSeen[e.w:GetFullName()]
+                if seen and os.clock() - seen > 2 then   -- (not the game setting up a gun just picked up)
+                    local cls = e.w:GetClass():GetFullName():match("%s(.+)$")
+                    S.xMods[cls] = S.xMods[cls] or {}
+                    if S.xMods[cls][e.c] ~= e.i then
+                        S.xMods[cls][e.c] = e.i
+                        saveMods()
+                        log("weapon mods remembered: " .. (cls:match("([^%.]+)$") or cls) .. " " .. e.c .. "=" .. e.i)
+                    end
+                end
+            end
+        end)
+    end
+    -- a gun new in our hands: our mods / the randomizer
+    local p = myPawn()
+    if not valid(p) then return end
+    local keep, rnd = S.extraNum("keepmods") > 0, S.extraNum("random") > 0
+    pcall(function()
+        for k = 1, p.Inventory:GetArrayNum() do
+            local w = p.Inventory[k]
+            if valid(w) then
+                local key = w:GetFullName()
+                if not S.xSeen[key] then
+                    if S.xSeenN > 500 then S.xSeen, S.xSeenN = {}, 0 end
+                    S.xSeen[key], S.xSeenN = os.clock(), S.xSeenN + 1
+                    local cls = w:GetClass():GetFullName():match("%s(.+)$")
+                    if rnd then
+                        local nc = w.WeaponCustomizationCategories:GetArrayNum()
+                        for c = 0, nc - 1 do setMod(w, c, math.random(0, 3)) end
+                        local ns = w.AllSkins:GetArrayNum()
+                        if ns > 0 then pcall(function() w:ApplyWeaponSkin(w.AllSkins[math.random(1, ns)]) end) end
+                    elseif keep and S.xMods[cls] then
+                        for c, i in pairs(S.xMods[cls]) do setMod(w, c, i) end
+                        log("weapon mods put on " .. (cls:match("([^%.]+)$") or cls))
+                    end
+                end
+            end
+        end
+    end)
+end)
+-- randomizer: enemies' guns get random colours (this game only; looks)
+S.xNpcGunSeen = {}
+S.every(1000, function()
+    if S.extraNum("random") <= 0 then return end
+    local n = 0
+    for _, w in ipairs(S.allOf("/Script/CPPFPS.BaseWeapon")) do
+        local key = w:GetFullName()
+        if not S.xNpcGunSeen[key] and n < 10 then
+            S.xNpcGunSeen[key] = true
+            n = n + 1
+            pcall(function()
+                local p = myPawn()
+                if valid(w.Owner) and not same(w.Owner, p) then
+                    local ns = w.AllSkins:GetArrayNum()
+                    if ns > 0 then w:ApplyWeaponSkin(w.AllSkins[math.random(1, ns)]) end
+                end
+            end)
+        end
+    end
+end)
+
+-- cheats
+S.xCheatList = nil
+S.xWorld, S.xWorldAt = nil, 0
+local function cheatList()
+    if S.xCheatList then return S.xCheatList end
+    local gi = FindFirstOf("GameInstanceBP_C")
+    if not valid(gi) then return {} end
+    local list = {}
+    pcall(function()
+        for i = 1, gi.AllCheats:GetArrayNum() do
+            local cmd = gi.AllCheats[i]:GetCDO().ConsoleCommand:ToString()
+            if cmd ~= "" then table.insert(list, cmd) end
+        end
+    end)
+    if #list > 0 then S.xCheatList = list end
+    return list
+end
+S.every(2000, function()
+    if S.extraNum("keepcheats") <= 0 then return end
+    local w = world()
+    if not valid(w) then return end
+    local wk = w:GetFullName()
+    if wk ~= S.xWorld then S.xWorld, S.xWorldAt, S.xCheatsPut = wk, os.clock(), false end
+    local K = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+    local age = os.clock() - S.xWorldAt
+    if not S.xCheatsPut and age > 4 then
+        -- a new level: put the remembered cheats back
+        S.xCheatsPut = true
+        local n = 0
+        for cmd, v in pairs(S.xCheats) do
+            local cur = 0
+            pcall(function() cur = K:GetConsoleVariableFloatValue(cmd) end)
+            if cur ~= v then
+                pcall(function() K:ExecuteConsoleCommand(w, cmd .. " " .. tostring(v), localPC()) end)
+                n = n + 1
+            end
+        end
+        if n > 0 then
+            pcall(function() FindFirstOf("GameInstanceBP_C"):RefreshCheatInterfaces() end)
+            log("cheats put back: " .. n)
+        end
+        return
+    end
+    if age < 10 then return end
+    -- what's on now is what the player wants
+    local changed = false
+    for _, cmd in ipairs(cheatList()) do
+        local v = 0
+        pcall(function() v = K:GetConsoleVariableFloatValue(cmd) end)
+        local want = (v ~= 0) and v or nil
+        if S.xCheats[cmd] ~= want then S.xCheats[cmd] = want; changed = true end
+    end
+    if changed then saveCheats() end
+end)
+end
+
+---------------------------------------------------------------------------
+-- F6 quick access: the game's own screens from anywhere on the map - weapon mods (any map),
+-- safehouse: missions, outfit, combat simulator, cheats; Horde: the shop. Calls the same events
+-- the game runs when you walk up and press the key.
+---------------------------------------------------------------------------
+do
+local function actorOf(clsName)
+    local a = FindFirstOf(clsName)
+    if valid(a) then return a end
+    for _, x in ipairs(S.allOf("/Script/Engine.Actor")) do
+        if x:GetClass():GetFName():ToString() == clsName then return x end
+    end
+end
+local function bound(a, pawn)
+    -- the actor's "interacted" event (BndEvt__..._OnInteractDelegate__DelegateSignature)
+    local fnName
+    pcall(function()
+        a:GetClass():ForEachFunction(function(f)
+            local n = f:GetFName():ToString()
+            if n:find("OnInteractDelegate") then fnName = n end
+        end)
+    end)
+    if fnName then a[fnName](a, pawn) end
+end
+function S.quickList()
+    local list = {}
+    local pawn = myPawn()
+    if not valid(pawn) then return list end
+    if valid(pawn.CurrentWeapon) then
+        table.insert(list, { name = "WEAPON MODS", fn = function() pawn:BPOpenWeaponCustomizeMenu() end })
+    end
+    local map = FindFirstOf("BP_SafehouseMissionMapInteract_C")
+    if valid(map) then
+        table.insert(list, { name = "MISSIONS", fn = function() map:InteractWithMissionMap(pawn) end })
+    end
+    local outfit = FindFirstOf("BP_SafeHouseCustomizeInteract_C")
+    if valid(outfit) then
+        table.insert(list, { name = "OUTFIT", fn = function() bound(outfit, pawn) end })
+    end
+    local sim = FindFirstOf("BP_SafeHouseCombatSimulatorInteract_C")
+    if valid(sim) then
+        table.insert(list, { name = "COMBAT SIMULATOR", fn = function() sim:InteractCombatSimulator(pawn) end })
+    end
+    if S.campaignLevel() and (S.campaignLevel() or ""):find("SafeHouse") then
+        local cheats = actorOf("BP_SafehouseScreen_Cheats_C")
+        if valid(cheats) then table.insert(list, { name = "CHEATS", fn = function() bound(cheats, pawn) end }) end
+    end
+    if S.hordeLevelHere() then
+        local zone = FindFirstOf("BP_HordeBuyZone_C")
+        if valid(zone) then table.insert(list, { name = "SHOP", fn = function() zone:ShowMenu() end }) end
+    end
+    return list
+end
+S.every(100, function()
+    local fn = S.quickRun
+    if not fn then return end
+    S.quickRun = nil
+    local ok, err = pcall(fn)
+    if not ok then log("quick access: " .. tostring(err)) end
 end)
 end
 
@@ -5019,6 +5411,18 @@ local function ensureEngineIni(mode)
     end
     S.iniOk = false
     log("Engine.ini updated for net=" .. tostring(mode) .. " - RESTART THE GAME once")
+    -- the game writes its in-memory Engine.ini back when it exits (that put the Null line back and
+    -- Steam mode asked for a restart forever): set the mode again after the game has closed
+    pcall(function()
+        local script = "ue4ss/Mods/T2Coop/fixini.ps1"
+        local fh = io.open(script, "r")
+        if not fh then return end
+        fh:close()
+        local winPath = path:gsub("/", "\\")
+        os.execute('start "" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'
+            .. script .. '" -Mode ' .. mode .. ' -Ini "' .. winPath .. '"')
+        log("network mode will be set again after the game closes")
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -5027,7 +5431,7 @@ end
 -- config.txt (next to this mod's folder): join_ip=, map=
 ---------------------------------------------------------------------------
 local CONFIG_PATH = "ue4ss/Mods/T2Coop/config.txt"
-local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player", skin = "", enemy_hp = "50" }
+local cfg = { join_ip = "127.0.0.1", map = "/Game/Maps/HordeMode/Horde_Killhouse", net = "ip", name = "", look = "player", skin = "", enemy_hp = "50", net_rate = "200000" }
 local function loadConfig()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return end
@@ -5056,6 +5460,9 @@ local function saveConfig()
     f:write("skin=" .. tostring(cfg.skin or "") .. "\n")
     f:write("# enemies get this much more health (percent) for every extra player, set by the host; 0 = off\n")
     f:write("enemy_hp=" .. tostring(cfg.enemy_hp or "50") .. "\n")
+    f:write("# network speed per player, bytes/s (the game's own limit is ~10000: over a VPN / the internet that\n")
+    f:write("# made everything lag and drift). Lower it on a slow connection; 0 = the game's default\n")
+    f:write("net_rate=" .. tostring(cfg.net_rate or "200000") .. "\n")
     f:close()
 end
 loadConfig()
@@ -5094,6 +5501,40 @@ if S.mySkin ~= "" and not S.mySkin:find("/") then
     for _, k in ipairs(S.SKINS or {}) do if k.id == cfg.skin then S.mySkin = k.cls end end
 end
 pcall(ensureEngineIni, cfg.net)
+
+-- Network speed: the engine's default per-player limit (MaxInternetClientRate 10000 B/s, 30 updates/s)
+-- is for small LAN games; over a VPN or the internet the many enemies/doors/bodies didn't fit and the
+-- game lagged and went out of sync. The host raises its limits and every connection's speed; a client
+-- asks for the same speed ("netspeed").
+S.every(2000, function()
+    local rate = tonumber(cfg.net_rate) or 0
+    if rate <= 0 then return end
+    local nd = netDriver()
+    if not nd then S.netSpeedSet = nil return end
+    if S.hosting then
+        pcall(function()
+            if (tonumber(nd.MaxClientRate) or 0) < rate then nd.MaxClientRate = rate end
+            if (tonumber(nd.MaxInternetClientRate) or 0) < rate then nd.MaxInternetClientRate = rate end
+            if (tonumber(nd.NetServerMaxTickRate) or 0) < 60 then nd.NetServerMaxTickRate = 60 end
+        end)
+        for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+            pcall(function()
+                if valid(pc) and not pc:IsLocalController() then
+                    local c = pc.NetConnection
+                    if valid(c) and (tonumber(c.CurrentNetSpeed) or 0) < rate then c.CurrentNetSpeed = rate end
+                end
+            end)
+        end
+    elseif S.joined and not S.netSpeedSet then
+        S.netSpeedSet = true
+        pcall(function()
+            StaticFindObject("/Script/Engine.Default__KismetSystemLibrary"):ExecuteConsoleCommand(world(), "netspeed " .. rate, localPC())
+            local c = nd.ServerConnection
+            if valid(c) and (tonumber(c.CurrentNetSpeed) or 0) < rate then c.CurrentNetSpeed = rate end
+        end)
+        log("net speed " .. rate)
+    end
+end)
 S.bootNet, S.bootIniOk, S.bootDriver = S.netMode, S.iniOk, S.driverClass
 
 -- switch ip <-> steam: rewrites Engine.ini for the next launch; this session keeps its mode
@@ -5204,10 +5645,13 @@ S.press = onKey   -- dev/tests: same as pressing a menu button ("host", "join", 
 pcall(function()
     RegisterKeyBind(Key.F4, function() onKey("menu") end)
 end)
+pcall(function()
+    RegisterKeyBind(Key.F6, function() onKey("quick") end)
+end)
 
 -- Also read the keys through the game's own input (works whenever the game gets the key).
 local keyState = {}
-local KEYS = { F4 = "menu" }
+local KEYS = { F4 = "menu", F6 = "quick" }
 local keyStructs = {}
 S.every(80, function()
     local pc = localPC()
@@ -5269,7 +5713,9 @@ S.every(100, function()
         cfg.enemy_hp = tostring(steps[idx])
         saveConfig()
     elseif action == "menu" then
-        S.menuToggle()
+        S.menuF4()
+    elseif action == "quick" then
+        S.menuF6()
     elseif action == "nextlook" or action == "facnext" or action == "facprev" or action == "varnext" or action == "varprev" then
         -- faction 0 = safehouse outfit; factions 1..n each with their variants
         local cat = S.catalog()
@@ -5412,7 +5858,65 @@ end)
 -- Buttons are polled (IsPressed -> released while hovered = click); no delegates from Lua.
 -- Avoid VerticalBox/SetPadding/SetVisibility here: one of them crashed UE4SS.
 ---------------------------------------------------------------------------
-local menu = { open = false, n = 0, buttons = {} }
+---------------------------------------------------------------------------
+-- EXTRAS (F4 - EXTRAS tab): optional gameplay tweaks, each player sets their own. Off = the game as it is.
+-- Saved in Mods/T2Coop/extras.txt (written by the menu).
+---------------------------------------------------------------------------
+do
+S.EXTRAS_PATH = "ue4ss/Mods/T2Coop/extras.txt"
+-- each: key, name, values (first = off / the game's own), text for a value
+S.extrasSpec = {
+    { key = "regen", name = "HEALTH REGEN", vals = { "0", "50", "75", "100" },
+      txt = function(v) return v == "0" and "GAME" or ("UP TO " .. v .. "%") end },
+    { key = "armor", name = "MAX ARMOR", vals = { "0", "100", "200", "300" },
+      txt = function(v) return v == "0" and "GAME" or v end },
+    { key = "resupply", name = "AUTO RESUPPLY", vals = { "0", "60", "30" },
+      txt = function(v) return v == "0" and "OFF" or ("EVERY " .. v .. " S") end },
+    { key = "killsupply", name = "RESUPPLY ON KILL", vals = { "0", "1" },
+      txt = function(v) return v == "1" and "ON" or "OFF" end },
+    { key = "execheal", name = "HEAL ON EXECUTION", vals = { "0", "25", "50", "100" },
+      txt = function(v) return v == "0" and "OFF" or (v == "100" and "FULL" or ("+" .. v .. "%")) end },
+    { key = "keepmods", name = "KEEP MY WEAPON MODS", vals = { "0", "1" },
+      txt = function(v) return v == "1" and "ON" or "OFF" end },
+    { key = "keepcheats", name = "REMEMBER CHEATS", vals = { "0", "1" },
+      txt = function(v) return v == "1" and "ON" or "OFF" end },
+    { key = "random", name = "RANDOMIZER", vals = { "0", "1" },
+      txt = function(v) return v == "1" and "ON" or "OFF" end },
+}
+S.extras = {}
+for _, e in ipairs(S.extrasSpec) do S.extras[e.key] = e.vals[1] end
+pcall(function()
+    local f = io.open(S.EXTRAS_PATH, "r")
+    if not f then return end
+    for line in f:lines() do
+        local k, v = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+        if k and S.extras[k] ~= nil then S.extras[k] = v end
+    end
+    f:close()
+end)
+function S.saveExtras()
+    local f = io.open(S.EXTRAS_PATH, "w")
+    if not f then return end
+    f:write("# Trepang2 Co-op EXTRAS - change them in the game: F4 - EXTRAS\n")
+    for _, e in ipairs(S.extrasSpec) do f:write(e.key .. "=" .. tostring(S.extras[e.key]) .. "\n") end
+    f:close()
+end
+function S.extraNum(key) return tonumber(S.extras[key]) or 0 end
+function S.extraNext(key, dir)
+    for _, e in ipairs(S.extrasSpec) do
+        if e.key == key then
+            local i = 1
+            for j, v in ipairs(e.vals) do if v == S.extras[key] then i = j end end
+            i = (i - 1 + (dir or 1)) % #e.vals + 1
+            S.extras[key] = e.vals[i]
+            S.saveExtras()
+            log("extra " .. key .. " = " .. S.extras[key])
+        end
+    end
+end
+end
+
+local menu = { open = false, n = 0, buttons = {}, page = "coop" }
 local MENU_X, MENU_Y, MENU_W, MENU_SCALE = 60, 60, 760, 0.62
 local MENU_H = 1168   -- panel height incl. margins (widget units before scaling)
 
@@ -5478,7 +5982,8 @@ local function button(tree, root, text, x, y, w, action, h, center)
     t:SetText(FText(text))
     textStyle(t, 24)
     if center then
-        place(root, t, x + (w - 16) / 2, y + (h - 36) / 2, w / 2, 36)
+        pcall(function() t:SetJustification(1) end)   -- centred in the tile
+        place(root, t, x + 6, y + (h - 36) / 2, w - 12, 36)
     else
         place(root, t, x + 20, y + (h - 36) / 2, w - 30, 36)
     end
@@ -5496,7 +6001,10 @@ local function paintTile(e, hot)
     if e.hot == hot and e.painted == e.enabled then return end
     e.hot, e.painted = hot, e.enabled
     pcall(function()
-        if not e.enabled then
+        if e.active and not hot then
+            e.fill:SetBrushColor({ R = 1, G = 1, B = 1, A = 0.16 })
+            setTextColor(e.t, 1, 1, 1)
+        elseif not e.enabled then
             e.fill:SetBrushColor({ R = 0, G = 0, B = 0, A = 0.3 })
             setTextColor(e.t, 0.45, 0.45, 0.45)
         elseif hot then
@@ -5530,58 +6038,109 @@ local function buildMenu()
     local root = tree.RootWidget
     menu.buttons = {}
     menu.slots = {}
-    local W2 = (MENU_W - 10) / 2
-    panel(tree, root, -30, -24, MENU_W + 60, 1138)
-    label(tree, root, "TREPANG2 CO-OP", 0, 0, "Title", 34, MENU_W - 130)
-    label(tree, root, "v" .. VERSION, MENU_W - 110, 14, "Ver", 20, 110, true)
-    box(tree, root, 0, 52, MENU_W, 2, 0.6, 0.6, 0.6, 0.45, "Line")
-    menu.status = label(tree, root, "", 0, 64, "Status", 22)
-    button(tree, root, "HOST", 0, 106, W2, "host")
-    button(tree, root, "NEXT ARENA", W2 + 10, 106, W2, "nextmap")
-    menu.arena = label(tree, root, "", 0, 172, "Arena", 20, MENU_W, true)
-    label(tree, root, "JOIN ADDRESS  (IP, or SteamID64 in Steam mode)", 0, 206, "JoinHint", 18, MENU_W, true)
-    box(tree, root, 0, 238, 575, TILE_H, 0.6, 0.6, 0.6, 0.55, "Edge")
-    local e = mk(tree, "EditableTextBox", "Addr")
-    e:SetText(FText(cfg.join_ip or ""))
-    place(root, e, 2, 240, 571, TILE_H - 4)
-    menu.edit = e
-    button(tree, root, "JOIN", 585, 238, MENU_W - 585, "join")
-    button(tree, root, "LEAVE CO-OP", 0, 306, W2, "leave")
-    button(tree, root, "CLOSE   F4", W2 + 10, 306, W2, "close")
-    section(tree, root, "PLAYERS", 384)
-    menu.players = label(tree, root, "", 0, 422, "Players", 22, W2, false, 130)
-    menu.toHost = button(tree, root, "TO THE HOST", W2 + 10, 422, W2, "tohost")
-    section(tree, root, "NETWORK", 556)
-    menu.net = label(tree, root, "", 0, 594, "Net", 20, MENU_W, true)
-    button(tree, root, "INVITE  (STEAM)", 0, 628, W2, "invite")
-    button(tree, root, "IP / STEAM MODE", W2 + 10, 628, W2, "netmode")
-    menu.friends = label(tree, root, "", 0, 694, "Friends", 18, MENU_W, true)
-    menu.fslots = {}
-    local fw = (MENU_W - 20) / 3
-    for i = 1, 3 do
-        menu.fslots[i] = button(tree, root, "", (i - 1) * (fw + 10), 724, fw, "friend" .. i, 48)
+    for _, k in ipairs({ "status", "arena", "edit", "players", "toHost", "net", "friends", "fslots", "facTile",
+        "varTile", "varPrev", "varNext", "lookHint", "hpTile", "previewTitle", "previewSub", "preview", "xtiles" }) do
+        menu[k] = nil
     end
-    section(tree, root, "LOOK", 790)
-    button(tree, root, "<", 0, 828, 64, "facprev", nil, true)
-    menu.facTile = button(tree, root, "", 74, 828, MENU_W - 148, "facnext")
-    button(tree, root, ">", MENU_W - 64, 828, 64, "facnext", nil, true)
-    menu.varPrev = button(tree, root, "<", 0, 894, 64, "varprev", nil, true)
-    menu.varTile = button(tree, root, "", 74, 894, MENU_W - 148, "varnext")
-    menu.varNext = button(tree, root, ">", MENU_W - 64, 894, 64, "varnext", nil, true)
-    menu.lookHint = label(tree, root, "", 0, 962, "LookHint", 18, MENU_W, true)
-    section(tree, root, "ENEMY HEALTH", 996)
-    button(tree, root, "<", 0, 1034, 64, "hpprev", nil, true)
-    menu.hpTile = button(tree, root, "", 74, 1034, MENU_W - 148, "hpnext")
-    button(tree, root, ">", MENU_W - 64, 1034, 64, "hpnext", nil, true)
-    -- look preview (left of the panel), same frame style
-    panel(tree, root, -400, -24, 350, 620)
-    menu.previewTitle = label(tree, root, "", -380, 0, "PreviewTitle", 24, 310)
-    menu.previewSub = label(tree, root, "", -380, 36, "PreviewSub", 18, 310, true)
-    box(tree, root, -380, 70, 310, 2, 0.6, 0.6, 0.6, 0.45, "Line")
-    menu.preview = mk(tree, "Image", "Preview")
-    place(root, menu.preview, -375, 84, 300, 450)
-    pcall(function() menu.preview:SetRenderOpacity(0) end)
-    label(tree, root, "how the others see you", -380, 548, "PreviewHint", 18, 310, true)
+    local page = menu.page or "coop"
+    local W2 = (MENU_W - 10) / 2
+    -- a page is only as tall as what's on it (the panel is drawn last-sized: added first, resized below)
+    local bgEdge = box(tree, root, -30, -24, MENU_W + 60, 200, 0.6, 0.6, 0.6, 0.55, "Edge")
+    local bgFill = box(tree, root, -28, -22, MENU_W + 56, 196, 0, 0, 0, 0.82, "Fill")
+    label(tree, root, "TREPANG2 CO-OP", 0, 0, "Title", 30, MENU_W - 230)
+    label(tree, root, "v" .. VERSION .. (page == "quick" and "    F6 - CLOSE" or "    F4 - CLOSE"), MENU_W - 230, 10, "Ver", 18, 230, true)
+    box(tree, root, 0, 48, MENU_W, 2, 0.6, 0.6, 0.6, 0.45, "Line")
+    local W3 = (MENU_W - 20) / 3
+    local y = 120
+    if page ~= "quick" then
+        for i, t in ipairs({ { "CO-OP", "coop" }, { "LOOK", "look" }, { "EXTRAS", "extras" } }) do
+            local e = button(tree, root, t[1], (i - 1) * (W3 + 10), 60, W3, "tab_" .. t[2], 46, true)
+            e.active = (page == t[2])
+        end
+    end
+    if page == "quick" then
+        y = 62
+        label(tree, root, "QUICK ACCESS  -  F6", 0, y, "QSub", 18, MENU_W, true)
+        y = y + 34
+        menu.quick = S.quickList()
+        if #menu.quick == 0 then
+            label(tree, root, "Nothing here - weapon mods, safehouse screens and the Horde shop", 0, y, "QNone", 20, MENU_W)
+            y = y + 40
+        end
+        for i, q in ipairs(menu.quick) do
+            button(tree, root, q.name, 0, y, MENU_W, "q_" .. i, 48)
+            y = y + 56
+        end
+    elseif page == "coop" then
+        menu.status = label(tree, root, "", 0, y, "Status", 22)
+        button(tree, root, "HOST", 0, y + 38, W2, "host")
+        button(tree, root, "NEXT ARENA", W2 + 10, y + 38, W2, "nextmap")
+        menu.arena = label(tree, root, "", 0, y + 102, "Arena", 18, MENU_W, true)
+        label(tree, root, "JOIN ADDRESS  (IP, or SteamID64 in Steam mode)", 0, y + 132, "JoinHint", 18, MENU_W, true)
+        box(tree, root, 0, y + 162, 430, TILE_H, 0.6, 0.6, 0.6, 0.55, "Edge")
+        local e = mk(tree, "EditableTextBox", "Addr")
+        e:SetText(FText(cfg.join_ip or ""))
+        place(root, e, 2, y + 164, 426, TILE_H - 4)
+        menu.edit = e
+        button(tree, root, "JOIN", 440, y + 162, 150, "join", nil, true)
+        button(tree, root, "LEAVE", 600, y + 162, MENU_W - 600, "leave", nil, true)
+        section(tree, root, "PLAYERS", y + 236)
+        menu.players = label(tree, root, "", 0, y + 274, "Players", 20, W2 + 40, false, 96)
+        menu.toHost = button(tree, root, "TO THE HOST", W2 + 50, y + 274, W2 - 40, "tohost", nil, true)
+        section(tree, root, "NETWORK", y + 376)
+        menu.net = label(tree, root, "", 0, y + 414, "Net", 18, MENU_W, true)
+        button(tree, root, "INVITE  (STEAM)", 0, y + 446, W2, "invite")
+        button(tree, root, "IP / STEAM MODE", W2 + 10, y + 446, W2, "netmode")
+        y = y + 512
+        if S.netMode == "steam" then
+            menu.friends = label(tree, root, "", 0, y, "Friends", 18, MENU_W, true)
+            menu.fslots = {}
+            local fw = (MENU_W - 20) / 3
+            for i = 1, 3 do
+                menu.fslots[i] = button(tree, root, "", (i - 1) * (fw + 10), y + 30, fw, "friend" .. i, 46)
+            end
+            y = y + 84
+        end
+    elseif page == "look" then
+        label(tree, root, "How the others see you", 0, y, "LookSub", 18, MENU_W, true)
+        button(tree, root, "<", 0, y + 32, 64, "facprev", nil, true)
+        menu.facTile = button(tree, root, "", 74, y + 32, MENU_W - 148, "facnext")
+        button(tree, root, ">", MENU_W - 64, y + 32, 64, "facnext", nil, true)
+        menu.varPrev = button(tree, root, "<", 0, y + 98, 64, "varprev", nil, true)
+        menu.varTile = button(tree, root, "", 74, y + 98, MENU_W - 148, "varnext")
+        menu.varNext = button(tree, root, ">", MENU_W - 64, y + 98, 64, "varnext", nil, true)
+        menu.lookHint = label(tree, root, "", 0, y + 166, "LookHint", 18, MENU_W, true)
+        y = y + 204
+        -- look preview (left of the panel), same frame style
+        panel(tree, root, -330, -24, 290, 470)
+        menu.previewTitle = label(tree, root, "", -310, 0, "PreviewTitle", 22, 250)
+        menu.previewSub = label(tree, root, "", -310, 32, "PreviewSub", 18, 250, true)
+        box(tree, root, -310, 64, 250, 2, 0.6, 0.6, 0.6, 0.45, "Line")
+        menu.preview = mk(tree, "Image", "Preview")
+        place(root, menu.preview, -300, 76, 240, 360)
+        pcall(function() menu.preview:SetRenderOpacity(0) end)
+    else
+        label(tree, root, "Your own game only - every player picks their own. Click to change.", 0, y, "XSub", 18, MENU_W, true)
+        y = y + 34
+        section(tree, root, "ENEMY HEALTH  (when you host)", y)
+        button(tree, root, "<", 0, y + 38, 64, "hpprev", nil, true)
+        menu.hpTile = button(tree, root, "", 74, y + 38, MENU_W - 148, "hpnext")
+        button(tree, root, ">", MENU_W - 64, y + 38, 64, "hpnext", nil, true)
+        y = y + 110
+        section(tree, root, "PLAYER", y)
+        y = y + 38
+        menu.xtiles = {}
+        for _, e in ipairs(S.extrasSpec) do
+            menu.xtiles[e.key] = button(tree, root, "", 0, y, MENU_W, "x_" .. e.key, 44)
+            y = y + 50
+        end
+        label(tree, root, "F6 - weapon mods, outfit, missions, shop: from anywhere", 0, y + 4, "XHint", 18, MENU_W, true)
+        y = y + 36
+    end
+    -- the panel fits the page
+    pcall(function() bgEdge.Slot:SetSize({ X = MENU_W + 60, Y = y + 48 }) end)
+    pcall(function() bgFill.Slot:SetSize({ X = MENU_W + 56, Y = y + 44 }) end)
+    menu.h = y + 80
     -- the game's default font is big at 1080p-like UI scale: shrink the whole panel
     pcall(function() root:SetRenderTransformPivot({ X = 0, Y = 0 }) end)
     pcall(function() root:SetRenderScale({ X = MENU_SCALE, Y = MENU_SCALE }) end)
@@ -5633,7 +6192,7 @@ local function layoutMenu()
         local vs = tonumber(WLL:GetViewportScale(pc)) or 1
         if sx <= 0 or sy <= 0 or vs <= 0 then return nil end
         -- as big as MENU_SCALE allows, smaller when the screen is short
-        local scale = math.min(MENU_SCALE, (sy / vs) / (MENU_H + MENU_Y))
+        local scale = math.min(MENU_SCALE, (sy / vs) / ((menu.h or MENU_H) + MENU_Y))
         local k = vs * scale
         if scale ~= menu.scale then
             menu.scale = scale
@@ -5695,12 +6254,12 @@ local function refreshMenu()
     local fname = fi > 0 and cat[fi].name or "Safehouse outfit"
     pcall(function() menu.facTile.t:SetText(FText(fi > 0 and string.format("%s   %d/%d", fname:upper(), fi, #cat) or "YOUR OWN OUTFIT")) end)
     pcall(function() menu.varTile.t:SetText(FText(fi > 0 and string.format("%s   %d/%d", (sk and sk.name or "?"):upper(), vi, #cat[fi].list) or "AS DRESSED IN THE SAFEHOUSE")) end)
-    menu.varTile.enabled, menu.varPrev.enabled, menu.varNext.enabled = fi > 0, fi > 0, fi > 0
+    if menu.varTile then menu.varTile.enabled, menu.varPrev.enabled, menu.varNext.enabled = fi > 0, fi > 0, fi > 0 end
     pcall(function() menu.lookHint:SetText(FText(fi > 0 and "Enemy outfit - arrows change the faction and the variant"
         or "Change it at the safehouse wardrobe, or press > for enemy outfits")) end)
     pcall(function() menu.previewTitle:SetText(FText(fi > 0 and (sk and sk.name or ""):upper() or "YOUR OUTFIT")) end)
     pcall(function() menu.previewSub:SetText(FText(fi > 0 and fname or "from the safehouse")) end)
-    pcall(function() S.previewUpdate(menu.preview) end)
+    if menu.preview then pcall(function() S.previewUpdate(menu.preview) end) end
     pcall(function()
         local pct = tonumber(cfg.enemy_hp) or 0
         local n = #(FindAllOf("PlayerController") or {})
@@ -5710,6 +6269,10 @@ local function refreshMenu()
         if S.joined then txt = pct <= 0 and "OFF - WHEN YOU HOST" or string.format("+%d%% PER PLAYER - WHEN YOU HOST", pct) end
         menu.hpTile.t:SetText(FText(txt))
     end)
+    for _, e in ipairs(S.extrasSpec) do
+        local tile = menu.xtiles and menu.xtiles[e.key]
+        if tile then pcall(function() tile.t:SetText(FText(e.name .. ":  " .. e.txt(S.extras[e.key]))) end) end
+    end
     for i, slot in ipairs(menu.fslots or {}) do
         local h = hosts[i]
         pcall(function() slot.t:SetText(FText(h and h.name or "")) end)
@@ -5747,8 +6310,30 @@ function S.menuOpen()
     setMenuInput(true)
 end
 
+-- switch the F4 tab (CO-OP / LOOK / EXTRAS): the panel is rebuilt for that page
+function S.menuTab(tab)
+    if tab == menu.page and valid(menu.w) then return end
+    if tab ~= "quick" then S.lastTab = tab end
+    menu.page = tab
+    pcall(S.previewDestroy)
+    S.preview.image = nil
+    if valid(menu.w) then pcall(function() menu.w:RemoveFromParent() end) end
+    menu.w, menu.x, menu.scale = nil, nil, nil
+    if not menu.open then return end
+    if buildMenu() then refreshMenu(); setMenuInput(true) else menu.open = false end
+end
+
+function S.menuF4()
+    if menu.open and menu.page == "quick" then S.menuTab(S.lastTab or "coop") else S.menuToggle() end
+end
+function S.menuF6()
+    if menu.open and menu.page == "quick" then S.menuClose()
+    elseif menu.open then S.menuTab("quick")
+    else menu.page = "quick"; S.menuOpen() end
+end
+
 function S.menuToggle()
-    if menu.open and valid(menu.w) then S.menuClose() else S.menuOpen() end
+    if menu.open and valid(menu.w) then S.menuClose() else menu.page = S.lastTab or "coop"; S.menuOpen() end
 end
 
 -- While the F4 menu or the game's own Esc menu (UI_MainMenu_C; in co-op the game can't pause) is
@@ -5803,6 +6388,24 @@ S.every(0, function()
             if okh and hovered then
                 if e.action == "close" then
                     S.menuClose()
+                    return
+                end
+                local tab = e.action:match("^tab_(%a+)$")
+                if tab then
+                    S.menuTab(tab)
+                    return
+                end
+                local qi = tonumber(e.action:match("^q_(%d+)$") or "")
+                if qi then
+                    local q = menu.quick and menu.quick[qi]
+                    S.menuClose()
+                    if q then S.quickRun = q.fn end   -- after the menu is gone (input mode)
+                    return
+                end
+                local xk = e.action:match("^x_(%a+)$")
+                if xk then
+                    S.extraNext(xk, 1)
+                    refreshMenu()
                     return
                 end
                 if e.action == "join" then

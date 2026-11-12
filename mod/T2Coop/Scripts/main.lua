@@ -4569,7 +4569,7 @@ end
 do
 local PING_TIME = 8
 S.pings = {}   -- name -> { icon, untilT }
-local function showPing(name, loc)
+local function showPing(name, loc, enemy)
     local old = S.pings[name]
     if old and valid(old.icon) then pcall(function() old.icon:K2_DestroyActor() end) end
     S.pings[name] = nil
@@ -4581,7 +4581,17 @@ local function showPing(name, loc)
         icon.OwningPlayer = localPC()
         S.modIcons[icon:GetFullName()] = true
         pcall(function() icon:Sickle_ShowIcon() end)
-        pcall(function() icon:HackOverrideSubtitle(FText(name)) end)
+        local label = name
+        if enemy then
+            -- on an enemy: stick to it (our copy of it) and say so
+            local npc = nearestNPC(loc, 250)
+            if valid(npc) then
+                pcall(function() icon:K2_AttachToActor(npc, FName("None"), 1, 1, 1, false) end)
+                pcall(function() icon:K2_SetActorRelativeLocation({ X = 0, Y = 0, Z = 110 }, false, {}, true) end)
+            end
+            label = name .. ": " .. (S.isRussian() and "ВРАГ" or "ENEMY")
+        end
+        pcall(function() icon:HackOverrideSubtitle(FText(label)) end)
         S.pings[name] = { icon = icon, untilT = os.clock() + PING_TIME }
     end)
 end
@@ -4622,27 +4632,39 @@ S.every(50, function()
             local hit, col = {}, { R = 1, G = 0, B = 0, A = 1 }
             local me = S.joined and S.client and S.client.pawn or pc.Pawn
             local blocked = KSL:LineTraceSingle(world(), cam, to, 0, false, { me }, 0, hit, true, col, col, 0)
-            if blocked then return hit.ImpactPoint end
+            if blocked then
+                pcall(function()
+                    local a = hit.Actor
+                    a = (type(a) == "userdata" and a.Get) and a:Get() or a
+                    if valid(a) and a:IsA(classOf("/Game/Blueprint/AI/BaseNPC.BaseNPC_C")) and not a.bIsDead then
+                        S.pingEnemy = a:K2_GetActorLocation()
+                    end
+                end)
+                return hit.ImpactPoint
+            end
             return to
         end)
         if ok and loc then
-            local p = { X = loc.X, Y = loc.Y, Z = loc.Z + 40 }
+            local enemy = S.pingEnemy
+            S.pingEnemy = nil
+            local p = enemy or { X = loc.X, Y = loc.Y, Z = loc.Z + 40 }
             local name = myPingName()
-            showPing(name, p)
-            if S.joined then S.toServer("PN", name, fmtVec(p)) else S.toClients("PN", name, fmtVec(p)) end
+            showPing(name, p, enemy ~= nil)
+            local e = enemy and 1 or 0
+            if S.joined then S.toServer("PN", name, fmtVec(p), e) else S.toClients("PN", name, fmtVec(p), e) end
         end
     end
     S.pingKeyWas = down
 end)
 handlers.server["PN"] = function(pc, p)
-    showPing(p[1] or "PING", vec(p, 2))
+    showPing(p[1] or "PING", vec(p, 2), p[5] == "1")
     for _, other in ipairs(FindAllOf("PlayerController") or {}) do
         if valid(other) and not other:IsLocalController() and other:GetFullName() ~= pc:GetFullName() then
-            S.toClient(other, "PN", p[1], p[2], p[3], p[4])
+            S.toClient(other, "PN", p[1], p[2], p[3], p[4], p[5])
         end
     end
 end
-handlers.client["PN"] = function(_, p) showPing(p[1] or "PING", vec(p, 2)) end
+handlers.client["PN"] = function(_, p) showPing(p[1] or "PING", vec(p, 2), p[5] == "1") end
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

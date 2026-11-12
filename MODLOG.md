@@ -542,6 +542,16 @@
     RestartPlayer делает новую, перезапуска уровня нет. Настоящая смерть марионетки (урон без DamageLimit)
     у хоста = смерть игрока → перезапуск арены/чекпоинта (поэтому лимит урона марионетки важен).
     Прогон всех карт кампании: вход гостя + 3 перезапуска уровня — 0 падений (scratchpad mapsweep.ps1).
+101. **Лифты (v0.9.26)** — актёры лифтов уровня НЕ реплицируются (bReplicates=false, у клиента Role=0):
+    TravelDown у хоста — у гостя лифт стоит. Классы: BP_CultistHubElevator (TravelDown/Up), BP_Finale_Elevator
+    (Prologue, x11, TravelToTargetZ/OpenDoor/CloseDoor), BP_GhostElevator, BP_MonolithEnemySpawnElevator,
+    BP_ShadowBayCrashElevator, BP_HorizonAtriumElevatorNew, BP_HorizonUnderpassElevator, BP_MothmanElevator,
+    BP_ReactorExitElevator (BP_MothmanRooftopElevator — скелетная анимация, не трогаем). Хост раз в 100 мс шлёт
+    `EL|имя|xyz` сдвинувшихся (и всех сдвинутых раз в 3 с), гость догоняет за ~0.1 с (K2_SetActorLocation без
+    sweep/teleport — стоящий на платформе едет). Двери — компоненты лифта: хост вешает хуки на все функции
+    `*Door*` класса (кроме Delegate/Timeline) → `ED|имя|функция`, гость вызывает свою (ForEachProperty у
+    UFunction считает и локальные переменные — параметры так не посчитать). Проверено: KillCultists — гость
+    доехал с хостом (-2642 у обоих); Prologue — OpenDoor/DisableDoorBlocker у гостя. Выключатель T2C.off.elev.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

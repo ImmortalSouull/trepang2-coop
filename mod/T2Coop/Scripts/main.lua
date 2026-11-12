@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.25"
+local VERSION = "0.9.26"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4875,6 +4875,124 @@ handlers.server["PN"] = function(pc, p)
     end
 end
 handlers.client["PN"] = function(_, p) showPing(p[1] or "PING", vec(p, 2), p[5] == "1") end
+end
+
+---------------------------------------------------------------------------
+-- Elevators. The story's elevators (level actors) are not replicated: the host's moved, a partner's
+-- copy stayed where it was (a partner standing in it was left behind or fell). The host sends the
+-- position of every elevator that moved ("EL|name|x|y|z", 10 times a second while it moves, and all
+-- moved ones every 3 s for newcomers); a partner's copy follows smoothly, carrying whoever stands on it.
+---------------------------------------------------------------------------
+do
+local ELEV = { "BP_CultistHubElevator_C", "BP_Finale_Elevator_C", "BP_GhostElevator_C",
+    "BP_MonolithEnemySpawnElevator_C", "BP_ShadowBayCrashElevator_C", "BP_HorizonAtriumElevatorNew_C",
+    "BP_HorizonUnderpassElevator_C", "BP_MothmanElevator_C", "BP_ReactorExitElevator_C" }
+local list, listAt, resendMs = {}, -99, 0
+local function far(a, b, d) return (a.X - b.X) ^ 2 + (a.Y - b.Y) ^ 2 + (a.Z - b.Z) ^ 2 > d * d end
+S.every(100, function(dt)
+    if not S.hosting or not netDriver() or #(FindAllOf("PlayerController") or {}) < 2 or S.off.elev then return end
+    if os.clock() - listAt > 10 then        -- (sub-levels stream in and out: look again now and then)
+        listAt = os.clock()
+        local old = {}
+        for _, e in ipairs(list) do old[e.name] = e end
+        list = {}
+        for _, cls in ipairs(ELEV) do
+            for _, a in ipairs(FindAllOf(cls) or {}) do
+                if valid(a) then
+                    local name = a:GetFName():ToString()
+                    local e = old[name] or { name = name }
+                    e.a = a
+                    pcall(S.hookElevDoors, a)
+                    if not e.start then pcall(function() e.start = a:K2_GetActorLocation() end) end
+                    e.last = e.last or e.start
+                    table.insert(list, e)
+                end
+            end
+        end
+    end
+    resendMs = resendMs + (dt or 100)
+    local all = resendMs >= 3000
+    if all then resendMs = 0 end
+    for _, e in ipairs(list) do
+        if valid(e.a) and e.start then
+            local l
+            pcall(function() l = e.a:K2_GetActorLocation() end)
+            if l and (far(l, e.last, 1) or (all and far(l, e.start, 1))) then
+                e.last = l
+                S.toClients("EL", e.name, fmtVec(l))
+            end
+        end
+    end
+end)
+-- Their doors are parts of the elevator, opened by its own functions: the host repeats every door
+-- call (functions named ...Door...) to the partners ("ED|elevator|function").
+local hooked = {}
+function S.hookElevDoors(a)
+    local cls = a:GetClass()
+    local cpath = cls:GetFullName():match("%s(.+)$")
+    if not cpath or hooked[cpath] then return end
+    hooked[cpath] = true
+    cls:ForEachFunction(function(fn)
+        local fname = fn:GetFName():ToString()
+        if fname:find("Door") and not fname:find("Delegate") and not fname:find("Timel") then
+            -- (a door function that takes parameters fails on the partner's side: logged, harmless)
+            pcall(function()
+                RegisterHook(cpath .. ":" .. fname, function(self)
+                    local ok, n = pcall(function() return self:get():GetFName():ToString() end)
+                    if ok and S.hosting then S.toClients("ED", n, fname) end
+                end)
+            end)
+        end
+    end)
+end
+local want, actors, lastStep = {}, {}, os.clock()
+handlers.client["EL"] = function(_, p) want[p[1]] = vec(p, 2) end
+handlers.client["ED"] = function(_, p)
+    for _, cls in ipairs(ELEV) do
+        for _, x in ipairs(FindAllOf(cls) or {}) do
+            if valid(x) and x:GetFName():ToString() == p[1] then
+                local ok, err = pcall(function() x[p[2]](x) end)
+                log("elevator " .. p[1] .. " " .. p[2] .. (ok and "" or (" failed: " .. tostring(err))))
+                return
+            end
+        end
+    end
+end
+S.every(0, function()
+    local now = os.clock()
+    local dt = now - lastStep
+    lastStep = now
+    if not S.joined or next(want) == nil then return end
+    for name, to in pairs(want) do
+        local a = actors[name]
+        if not valid(a) then
+            a = nil
+            for _, cls in ipairs(ELEV) do
+                for _, x in ipairs(FindAllOf(cls) or {}) do
+                    if valid(x) and x:GetFName():ToString() == name then a = x break end
+                end
+                if a then break end
+            end
+            actors[name] = a
+        end
+        if not a then
+            want[name] = nil      -- (not on this level / not streamed in: the next update tries again)
+        else
+            local l = a:K2_GetActorLocation()
+            local d = { X = to.X - l.X, Y = to.Y - l.Y, Z = to.Z - l.Z }
+            local len = math.sqrt(d.X * d.X + d.Y * d.Y + d.Z * d.Z)
+            if len < 0.5 then
+                want[name] = nil
+            else
+                -- catch up over ~0.1 s (one update), jump if it's far off (newcomer, big lag)
+                local k = (len > 1500) and 1 or math.min(1, dt / 0.1)
+                pcall(function()
+                    a:K2_SetActorLocation({ X = l.X + d.X * k, Y = l.Y + d.Y * k, Z = l.Z + d.Z * k }, false, {}, false)
+                end)
+            end
+        end
+    end
+end)
 end
 
 -- Partner fell through the floor / off the map. Below the level's KillZ the engine destroys our

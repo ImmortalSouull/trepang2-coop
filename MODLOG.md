@@ -408,6 +408,9 @@
     `SafehouseMissionSelected(Mission_Ghosts_C)` + `BP_HelicopterStartMission_C:SetMissionReady/StartMissionSequence` →
     KillGhosts, гость следом. С FName("None") игра уходит в главное меню (хостинг корректно останавливается).
     Удалить один элемент TArray из Lua (`RemoveAt`) нельзя — index out of range.
+75. **Быстрее обратно после смены уровня (v0.9.6)** — переподключение: первая попытка через 4 с, дальше каждые 6 с,
+    30 попыток (было 8 / 15 / 12); «хост не отвечает» только с 4-й. Перезапуск KillCultists: гость снова в игре
+    через 14 с (было 18–20), KillMothman 14–16 с. Скрипт замера: scratchpad rejointime.ps1.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

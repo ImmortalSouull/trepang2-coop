@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.5"
+local VERSION = "0.9.6"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1259,21 +1259,22 @@ S.every(250, function(dt)
 end)
 
 -- Client: if we lose the host (arena restart, network hiccup), keep trying to get back in.
-handlers.client["RJ"] = function() S.rejoin = { at = os.time() + 15, tries = 0 } end
+handlers.client["RJ"] = function() S.rejoin = { at = os.time() + 8, tries = 0 } end
 S.every(1000, function()
     if not S.joined or not S.lastIP then return end
     if netDriver() then S.rejoin = nil; return end
-    S.rejoin = S.rejoin or { at = os.time() + 8, tries = 0 }
-    if os.time() >= S.rejoin.at and S.rejoin.tries < 12 then
+    -- first try soon after losing the host, then every 6 s for about 3 minutes
+    S.rejoin = S.rejoin or { at = os.time() + 4, tries = 0 }
+    if os.time() >= S.rejoin.at and S.rejoin.tries < 30 then
         local tries = S.rejoin.tries + 1
         log("reconnecting to " .. S.lastIP .. " (try " .. tries .. ")")
-        if tries > 1 then
-            S.notify(string.format(S.isRussian() and "CO-OP: хост не отвечает - переподключение (%d/12)"
-                or "CO-OP: the host doesn't answer - reconnecting (%d/12)", tries))
+        if tries > 3 then   -- (a normal level change takes a few tries while the host loads)
+            S.notify(string.format(S.isRussian() and "CO-OP: хост не отвечает - переподключение (%d/30)"
+                or "CO-OP: the host doesn't answer - reconnecting (%d/30)", tries))
         end
         S.join(S.lastIP)            -- resets S.rejoin
-        S.rejoin = { at = os.time() + 15, tries = tries }
-    elseif os.time() >= S.rejoin.at and S.rejoin.tries >= 12 then
+        S.rejoin = { at = os.time() + 6, tries = tries }
+    elseif os.time() >= S.rejoin.at and S.rejoin.tries >= 30 then
         -- give up: the host is gone for good
         S.joined, S.rejoin = false, nil
         log("gave up reconnecting")

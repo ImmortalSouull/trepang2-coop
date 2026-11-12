@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign) - Beta
 
 ## Version
-0.9.14
+0.9.15
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -43,6 +43,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*]Enemies, waves and money run on the host; the Horde HUD (wave, enemies left, money, timer) for everyone.
 [*]Partner bullets, shotgun pellets, headshots, grenades, kicks, dropkicks, melee strikes and sword hurt enemies; partner kills earn Horde money.
 [*]Guns dropped by enemies or bought by the host can be picked up by anyone.
+[*][b]The shop works for partners[/b]: they see the shared money and buy for themselves (the item lands right behind them); squads they buy join the fight for everyone.
 [*][b]Human shields[/b]: a partner can grab an enemy, hold it, let it go or throw it - the real enemy follows, everyone sees it.
 [*][b]Fire[/b]: a partner's incendiary rounds and molotovs set the real enemies on fire; burning enemies burn on every screen.
 [*]Down & revive; if everyone is down the arena restarts and everyone reconnects automatically.

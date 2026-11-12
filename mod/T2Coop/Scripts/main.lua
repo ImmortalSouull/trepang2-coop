@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.14"
+local VERSION = "0.9.15"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4676,6 +4676,128 @@ handlers.server["TH"] = function(pc)
     pcall(function() pc.Pawn:K2_SetActorLocation(spot, false, {}, true) end)
     S.toClient(pc, "S", string.format("%.1f|%.1f|%.1f", spot.X, spot.Y, spot.Z), string.format("%.1f", yaw))
     log("moved " .. pc:GetFName():ToString() .. " to the host")
+end
+
+---------------------------------------------------------------------------
+-- Horde shop for partners. The money (CPPFPSGameMode.Credits) exists only on the host, so a
+-- partner's shop (UI_BuyZone_C) showed $0 and bought nothing. Now: the partner's shop shows the
+-- host's money; clicking an item (UI_BuyZone_C:OnItemButtonClicked, pre-hook) asks the host ("BY|item").
+-- The host checks and takes the money, then: squads (FriendlyNPCs) are spawned by the host's buy zone
+-- for everyone; items (Contents: guns, grenades, health...) are spawned by the partner at its own feet
+-- ("BYOK|item") - local things are what a partner can pick up.
+---------------------------------------------------------------------------
+do
+S.shopHooked = nil
+S.shopQueue = {}
+S.every(500, function()
+    if not S.joined then return end
+    local ui
+    for _, w in ipairs(FindAllOf("UI_BuyZone_C") or {}) do
+        local ok, iv = pcall(function() return w:IsInViewport() end)
+        if ok and iv then ui = w break end
+    end
+    if not valid(ui) then return end
+    -- the host's money in the partner's shop
+    pcall(function()
+        local m = S.client and S.client.hudParts and S.client.hudParts[4]
+        if m and m ~= "" then ui.CurrentCreditsText:SetText(FText(m)) end
+    end)
+    -- hook the item click (once per class object: the class can be reloaded with a map)
+    local cls = ui:GetClass()
+    local key = cls:GetAddress()
+    if S.shopHooked ~= key then
+        local path = cls:GetFullName():match("%s(.+)$")
+        local ok = pcall(function()
+            RegisterHook(path .. ":OnItemButtonClicked", function(self, item)
+                local it = item and item:get()
+                if it then table.insert(S.shopQueue, it:GetFullName():match("%s(.+)$")) end
+            end)
+        end)
+        -- closing the shop ends in the buy zone, which needs the game mode a client doesn't have:
+        -- the shop stayed on screen for good. Catch the close buttons and close it ourselves.
+        for _, f in ipairs({ "CloseMenu", "BndEvt__UI_BuyZone_CloseButtonBottom_K2Node_ComponentBoundEvent_0_OnButtonClicked__DelegateSignature",
+                "BndEvt__UI_BuyZone_CloseButton_K2Node_ComponentBoundEvent_1_OptionHeaderClicked__DelegateSignature" }) do
+            pcall(function() RegisterHook(path .. ":" .. f, function() S.shopClose = true end) end)
+        end
+        if ok then S.shopHooked = key; log("shop hooked") end
+    end
+    -- Esc closes it too
+    S.ESCKEY = S.ESCKEY or { KeyName = FName("Escape", EFindName.FNAME_Add) }
+    local pc = localPC()
+    pcall(function() if valid(pc) and pc:IsInputKeyDown(S.ESCKEY) then S.shopClose = true end end)
+end)
+S.every(100, function()
+    if not S.joined or not S.shopClose then return end
+    S.shopClose = false
+    for _, w in ipairs(FindAllOf("UI_BuyZone_C") or {}) do
+        pcall(function() if w:IsInViewport() then w:RemoveFromParent() end end)
+    end
+    -- (Esc also opens the game's own menu behind the shop: that one stays, the player closes it)
+    pcall(function()
+        local pc = localPC()
+        local open = false
+        for _, m in ipairs(FindAllOf("UI_MainMenu_C") or {}) do if m:IsInViewport() then open = true end end
+        if not open then
+            StaticFindObject("/Script/UMG.Default__WidgetBlueprintLibrary"):SetInputMode_GameOnly(pc)
+            pc.bShowMouseCursor = false
+        end
+    end)
+end)
+S.every(100, function()
+    if not S.joined or #S.shopQueue == 0 then return end
+    local path = table.remove(S.shopQueue, 1)
+    if path then S.toServer("BY", path) end
+end)
+
+local function itemCDO(path)
+    local cls = StaticFindObject(path)
+    if not valid(cls) and LoadAsset then pcall(function() cls = LoadAsset(path) end) end
+    if not valid(cls) then return nil end
+    local cdo
+    pcall(function() cdo = cls:GetCDO() end)
+    return valid(cdo) and cdo or nil, cls
+end
+handlers.server["BY"] = function(pc, p)
+    local cdo, cls = itemCDO(p[1] or "")
+    local gm = FindFirstOf("CPPFPSGameMode")
+    if not cdo or not valid(gm) then return end
+    local price = tonumber(cdo.Price) or 0
+    local credits = tonumber(gm.Credits) or 0
+    if credits < price then
+        S.toClient(pc, "NT", S.isRussian() and "CO-OP: не хватает денег" or "CO-OP: not enough money")
+        return
+    end
+    pcall(function() gm:SubtractCredits(price) end)
+    local squad = false
+    pcall(function() squad = cdo.FriendlyNPCs:GetArrayNum() > 0 end)
+    if squad then
+        local zone = FindFirstOf("BP_HordeBuyZone_C")
+        if valid(zone) then pcall(function() zone:OnItemPurchased(cls) end) end
+    end
+    S.toClient(pc, "BYOK", p[1], squad and 1 or 0, price)
+    log("partner bought " .. (p[1]:match("([^%.]+)$") or p[1]) .. " for " .. price)
+end
+handlers.client["BYOK"] = function(_, p)
+    local cdo = itemCDO(p[1] or "")
+    local pawn = S.client and S.client.pawn
+    if cdo and valid(pawn) and p[2] ~= "1" then
+        local n = 0
+        pcall(function() n = cdo.Contents:GetArrayNum() end)
+        local l = pawn:K2_GetActorLocation()
+        -- behind the player: when buying you face the shop crate, and F would open the shop again
+        local yaw = math.rad(pawn:K2_GetActorRotation().Yaw + 180)
+        for i = 1, n do
+            pcall(function()
+                local c = cdo.Contents[i]   -- (a UClass, like KilledHVTs)
+                if valid(c) then
+                    local off = 70 + 30 * (i - 1)
+                    world():SpawnActor(c, { X = l.X + math.cos(yaw) * off, Y = l.Y + math.sin(yaw) * off, Z = l.Z - 30 }, { Pitch = 0, Yaw = 0, Roll = 0 })
+                end
+            end)
+        end
+    end
+    S.notify(string.format(S.isRussian() and "CO-OP: куплено ($%s) - лежит у вас за спиной" or "CO-OP: bought ($%s) - it's right behind you", tostring(p[3] or "?")))
+end
 end
 
 -- Dev: walk the local pawn forward for N seconds (movement test without window focus).

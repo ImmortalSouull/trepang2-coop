@@ -470,6 +470,12 @@
     `SnapshotPose` (поза смерти; стек через хук UE4SS, чтение 0x0). Теперь +3000 (выше). Проверка: открыть сайд-миссию
     одному, F4 HOST (`T2C.onKey("host")`), вход B — scratchpad sidetest.ps1. Внимание: `T2C.netDriver` не
     существует (локальная функция) — проверять `FindAllOf("IpNetDriver")` / netstat.
+90. **Все сайд-миссии вдвоём (v0.9.20)** — список: `GameInstanceBP.RequiredMissionsList:GetCDO()` → CampaignMissions
+    (+ BadOil, TeamSpirit), SideMissions (sm_complex, OilRig, Cavern, ServerRoom, WetBasement, GroundedAviation),
+    поле `MapName` (короткое имя, `open <имя>` работает). На sm_complex и WetBasement нет PlayerStart →
+    `RestartPlayer` пешку не создаёт (гость без пешки; на sm_complex ещё и зависание гостя в SetSkeletalMesh при
+    одевании — после исправления пропало). Теперь запасной путь `gm:RestartPlayerAtTransform(pc, рядом с хостом)`.
+    Проверено: все 9 карт — хост через F4, вход гостя, гость рядом, без падений/зависаний. Выключатель `T2C.off.dress`.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

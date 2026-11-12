@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.19"
+local VERSION = "0.9.20"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -278,6 +278,15 @@ local function setupRemotePlayers()
             local key = pc:GetFullName()
             if not valid(pc.Pawn) then
                 gm:RestartPlayer(pc)
+                -- maps without player starts (side missions Complex, Wet Basement): RestartPlayer makes
+                -- no pawn - make it right next to the host instead
+                if not valid(pc.Pawn) then
+                    pcall(function()
+                        local spot = S.freeSpotNear(host.Pawn, S.spawnIndex + 1)
+                        gm:RestartPlayerAtTransform(pc, { Rotation = { X = 0, Y = 0, Z = 0, W = 1 }, Translation = spot, Scale3D = { X = 1, Y = 1, Z = 1 } })
+                        log("no player start here - pawn made next to the host")
+                    end)
+                end
             end
             local pawn = pc.Pawn
             if valid(pawn) and not S.known[key] then
@@ -2533,6 +2542,7 @@ S.every(0, function(dt)
 end)
 
 local function wearLook(p)
+    if S.off.dress then return end
     local look = S.looks[S.pidOf(p) or -2]
     if look and look.skin and look.skin ~= "" and skinById(look.skin) then
         if wearCostume(p, look.skin) then return end

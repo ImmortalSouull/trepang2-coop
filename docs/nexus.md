@@ -76,7 +76,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Controls[/b][/size]
 [list]
-[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, players, network mode, Steam invite, your look, enemy health, players with their health and ping, and TO THE HOST (stuck somewhere? it puts you next to the host).
+[*][b]F4[/b] - the co-op menu: host, join, leave, Horde arena, network mode, Steam invite, your look, enemy health, players with their health and ping, and TO THE HOST (stuck somewhere? it puts you next to the host).
 [*][b]X[/b] (gamepad: d-pad left) - ping: a marker with your name where you look, for everyone, 8 seconds. On an enemy it sticks to them and says ENEMY.
 [/list]
 

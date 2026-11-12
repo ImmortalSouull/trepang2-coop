@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.23"
+local VERSION = "0.9.24"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1323,7 +1323,20 @@ S.every(1000, function()
         return
     end
     if not S.joined or not S.lastIP then return end
-    if netDriver() then S.rejoin = nil; return end
+    if netDriver() then
+        S.rejoin = nil
+        S.clientLevel = (S.currentLevelName and S.currentLevelName()) or S.clientLevel
+        return
+    end
+    -- lost the host on the credits level: the game is over and the host's game went back to the
+    -- main menu - no point reconnecting
+    if S.clientLevel and S.clientLevel:find("^Credits") then
+        S.joined, S.rejoin, S.clientLevel = false, nil, nil
+        log("the end: the host went back to the main menu")
+        S.notify(S.isRussian() and "CO-OP: конец игры - хост вернулся в главное меню. Спасибо за игру!"
+            or "CO-OP: the end - the host went back to the main menu. Thanks for playing!")
+        return
+    end
     -- first try soon after losing the host, then every 15 s for about 4 minutes
     S.rejoin = S.rejoin or { at = os.time() + 4, tries = 0 }
     if os.time() >= S.rejoin.at and S.rejoin.tries < 16 then
@@ -3014,6 +3027,7 @@ local function currentLevelName()
     local ok, name = pcall(function() return GS:GetCurrentLevelName(world(), true):ToString() end)
     return ok and name or nil
 end
+S.currentLevelName = currentLevelName
 -- Campaign: every level the GAME opens on the host (mission start from the safehouse, next
 -- level, checkpoint reload, restart) comes without "listen", which would end the session.
 -- OpenLevel only stores the travel URL for the next frame, so right after the game's call we

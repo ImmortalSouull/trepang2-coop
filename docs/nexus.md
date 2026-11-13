@@ -26,6 +26,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]Cutscenes for everyone[/b]: a cutscene waits until every player has come to where it starts ("WAITING FOR PLAYERS 1/2" at the top of the screen and a "GATHER HERE" marker), then plays for all players at the same moment. Partners are not written into the scene; afterwards everyone continues together.
 [*][b]Radio and dialogue[/b] lines with the speaker's portrait and subtitles are heard by all.
 [*][b]Story events are shared[/b]: objectives, doors, scripted triggers - a friend walking into a trigger sets it off for everyone. Doors the story locks or unlocks match on every machine.
+[*][b]Level pieces move for everyone[/b]: elevators (a partner riding one goes along), elevator doors, roll-up doors, laser gates and collapsing walls change on every machine.
+[*][b]Fell off the map?[/b] You're brought back to the host automatically.
 [*][b]Interactions are shared[/b]: terminals, buttons, levers, elevators and scripted scenes (like forcing the cultists' heavy doors) - whoever presses F, the story moves for everyone, and things the story switches on or off match for all players.
 [*][b]Objective markers[/b] the story shows ("find the Enforcer", distance through walls) appear for every player.
 [*][b]Side missions[/b] work the same way: start one, F4 - HOST, friends join.
@@ -83,8 +85,8 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 
 [size=4][b]Known issues (beta)[/b][/size]
 [list]
-[*]Campaign: bosses and some special scenes are not synced yet; elevators are shared through their buttons but not tested on every level yet.
-[*]Checked in co-op: Prologue, KillCultists, KillSyndicate, KillGhosts, KillMothman, KillHorizon, the Safehouse betrayal, the credits, side missions.
+[*]Campaign: boss fights (Mothman, the finale) have not been played through in co-op yet - please report how they go.
+[*]Checked in co-op: every campaign map (join, level restarts, checkpoint reloads), the Safehouse betrayal, the credits and the end of the game, side missions, all Horde arenas.
 [*]A partner's gun shows without its attachments and skin on the others' screens.
 [*]After a level change friends reconnect on their own a few seconds after the host's level is up (about 15 seconds on a restart).
 [*]Dual wielding shows both guns but with a two-handed pose.
@@ -98,7 +100,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]v0.7.4[/b] - done: interactions (terminals, buttons, scenes), objective markers, human shields, partner fire
 [*][b]v0.8.0-0.8.4[/b] - done: boss health bars for all, enemy health setting in the menu, side missions, mission weapon and gas mask for friends
 [*][b]v0.8.x[/b] - bosses' special mechanics, special levels, side missions
-[*][b]v0.9[/b] - done: spectating while down, progress for every player, rejoining; next: a full campaign run together
+[*][b]v0.9[/b] - done: spectating while down, progress for every player, rejoining, elevators and level pieces, end of the game; next: a full campaign run together
 [*][b]v1.0[/b] - the whole Trepang2 campaign + Horde playable in co-op
 [/list]
 

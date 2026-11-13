@@ -66,9 +66,13 @@ the story for everyone - and story objective markers show for every player.
 - Enemy looks that froze the game (28 of 328) are left out; the F4 LOOK preview no longer crashes co-op games.
 - EXTRAS (optional, each player sets their own, off = the game as it is): health regen up to 50/75/100%, max armor 100/200/300, auto resupply (ammo, grenade, focus every 60/30 s), resupply on kill, heal on execution, keep your weapon mods on guns you pick up, remember cheats between game launches, randomizer (weapon mods and colours).
 - F6 quick access: weapon mods anywhere; in the safehouse missions, outfit, combat simulator, cheats; in Horde the shop.
+- Elevators, roll-up doors, laser gates and other scripted level pieces move / change for everyone.
+- Fell off the map? You're brought back to the host automatically.
+- Checkpoint reloads and joining a mission in progress no longer crash the partner; every campaign map checked with a partner (join + level restarts).
+- The end of the game works in co-op: after the final credits partners stay in the main menu ("the end").
 
 ## Known issues
-See [docs/releases](docs/releases). Campaign co-op is early: bosses and some special scenes are not synced yet.
+See [docs/releases](docs/releases). Campaign co-op is in beta: boss fights (Mothman, the finale) have not been played through in co-op yet - reports welcome.
 
 ## For developers
 `mod/T2Coop/Scripts/main.lua` is the whole mod. `MODLOG.md` documents every engine finding,

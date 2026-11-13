@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.28"
+local VERSION = "0.9.29"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -44,6 +44,9 @@ S.graceMs = 0       -- no tasks while a map loads (old world torn down) and brie
 local function runTasks(dtMs)
     if running then return end   -- never re-enter (game calls made by a task can tick hooks)
     if S.loading then return end
+    -- the host asked for a level change: the old level (and the partners' bodies in it) is being torn
+    -- down over the next seconds - touching it then crashed the host (AV). Wait for the new one.
+    if S.awaitHostLoad and os.clock() - (S.travelReqAt or 0) < 20 then return end
     if S.graceMs > 0 then S.graceMs = S.graceMs - dtMs; return end
     if S.gcStopped then S.gcStopped = false; collectgarbage("restart") end
     running = true
@@ -190,6 +193,7 @@ end
 function S.host(map)
     S.hosting = true
     S.awaitHostLoad = true
+    S.travelReqAt = os.clock()
     S.joined = false
     S.hostMap = map or "/Game/Maps/HordeMode/Horde_Killhouse"
     S.known = {}
@@ -319,6 +323,16 @@ local function controllerReady(pawn)
     if not valid(c) then return false end
     local ok, cam = pcall(function() return c.PlayerCameraManager end)
     return ok and valid(cam)
+end
+
+-- Client: our own pawn has been in play (controller and camera ready) for `secs` seconds. Things the
+-- host sends a newcomer are applied only then: done in the same moment the level was still setting
+-- up, they crashed the partner's game now and then (AV reading 0x2b8).
+function S.settled(secs)
+    local pawn = S.client and S.client.pawn
+    if not S.joined or not valid(pawn) or not controllerReady(pawn) then S.settleAt = nil return false end
+    S.settleAt = S.settleAt or os.clock()
+    return os.clock() - S.settleAt >= (secs or 3)
 end
 
 local function isNetClient()
@@ -636,6 +650,9 @@ end)
 -- Map load bookkeeping.
 RegisterLoadMapPreHook(function()
     S.loading = true
+    -- messages still queued from the old level carry its player controllers, which die with it:
+    -- handling one after the load crashed the host (AV reading a dead controller)
+    inbox = {}
     setAutoPossess(true)
     S.known = {}
     S.spawnIndex = 0
@@ -646,6 +663,7 @@ RegisterLoadMapPreHook(function()
     S.trigSeen = {}
     S.trQueue, S.trReadyAt = {}, nil
     S.doQueue, S.doReadyAt = {}, nil
+    S.settleAt, S.miPending = nil, nil
     if S.cut then S.cut = { active = false } end
     S.gate, S.gateDone, S.lastTrig = nil, {}, nil
     S.expectPlayers, S.expectUntil = S.lastCount or 1, os.clock() + 120
@@ -665,6 +683,7 @@ end)
 local loadedAt = 0
 RegisterLoadMapPostHook(function()
     S.loading = false
+    inbox = {}
     S.graceMs = 1500
     loadedAt = os.time()
     S.awaitHostLoad = false
@@ -3087,6 +3106,7 @@ local function onGameOpenLevel(ctx, name, opts)
     end)
     relisten = false
     S.awaitHostLoad = true
+    S.travelReqAt = os.clock()
     S.hostMap = n
     S.travels = (S.travels or 0) + 1
     log("host travel to " .. n .. (o ~= "" and (" [" .. o .. "]") or "") .. ": server kept on " .. tostring(ok) .. " " .. tostring(err or ""))
@@ -3186,6 +3206,7 @@ end
 function S.hostHere(name)
     S.hosting, S.joined = true, false
     S.awaitHostLoad = true
+    S.travelReqAt = os.clock()
     S.hostMap = name
     S.known = {}
     log("hosting this level: " .. name)
@@ -3282,15 +3303,19 @@ function S.runHostTrigger(name, n, pawn)
     end
 end
 
-handlers.client["MI"] = function(_, p)
+handlers.client["MI"] = function(_, p) S.miPending = p[1] end
+S.every(500, function()
+    if not S.miPending or not S.settled(3) then return end
+    local path = S.miPending
+    S.miPending = nil
     pcall(function()
         local gi = FindFirstOf("GameInstanceBP_C")
         local cur = gi.CurrentMissionInfoObject
-        if valid(cur) and classPath(cur) == p[1] then return end
-        local cls = StaticFindObject(p[1])
-        if valid(cls) then gi:SetCurrentMission(cls); log("mission: " .. p[1]) end
+        if valid(cur) and classPath(cur) == path then return end
+        local cls = StaticFindObject(path)
+        if valid(cls) then gi:SetCurrentMission(cls); log("mission: " .. path) end
     end)
-end
+end)
 
 -- client: enemies come from the host (network copies). One that exists only here (spawned by
 -- something local) would be a ghost the host never sees - remove it.
@@ -3896,7 +3921,7 @@ handlers.client["IE"] = function(_, p)
     S.ieHost[p[1] .. "|" .. p[2]] = p[3] == "1"
 end
 S.every(500, function()
-    if not S.joined or not netDriver() or next(S.ieHost) == nil or S.off.ie then return end
+    if not S.joined or not netDriver() or next(S.ieHost) == nil or S.off.ie or not S.settled(3) then return end
     for _, e in ipairs(sharedComps()) do
         local want = S.ieHost[e.owner .. "|" .. e.name]
         if want ~= nil and e.c.bAllowInteraction ~= want then

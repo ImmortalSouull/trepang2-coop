@@ -564,6 +564,14 @@
     Концы миссий (scratchpad endchain.ps1, TryTrigger Trigger_EndLevel_C у хоста): KillGhosts и KillSyndicate →
     SafeHouse_Persistent, гость следом. Trigger_EndLevel_Credits_SkipCutsceneInstant (KillSyndicate) → сразу
     FrontEndMenuMap. Prologue/Cultists/Horizon/Mothman — без Trigger_EndLevel (конец через сцены/эвакуацию).
+104. **Падения при смене уровня (v0.9.29)** — (1) хост: AV через ~3 с после «host travel» (KillGhosts конец →
+    SafeHouse, 2 из 3). Сообщение гостя (AS) лежало в inbox с указателем на PlayerController старого мира и
+    обрабатывалось после загрузки новой карты. Теперь inbox очищается в LoadMapPre и LoadMapPost, а задачи
+    мода стоят с запроса перехода (S.awaitHostLoad + S.travelReqAt, не дольше 20 с) до загрузки. 8 кругов
+    (16 переходов) — 0 падений (scratchpad endloop.ps1, T2RX=1 — журнал входящих). (2) гость: AV 0x2b8 при
+    входе на уровень — IE (EnableInteraction/DisableInteraction) и MI (SetCurrentMission) теперь только при
+    S.settled(3) (пешка гостя готова ≥3 с; сброс в LoadMapPre). Регрессия к 1.0: 50 арен «Орды» (hordesweep),
+    7 сайд-миссий (sidetest), все карты кампании, бои 40+30 раундов — без падений.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

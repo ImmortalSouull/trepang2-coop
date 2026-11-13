@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.26"
+local VERSION = "0.9.27"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -4887,6 +4887,11 @@ do
 local ELEV = { "BP_CultistHubElevator_C", "BP_Finale_Elevator_C", "BP_GhostElevator_C",
     "BP_MonolithEnemySpawnElevator_C", "BP_ShadowBayCrashElevator_C", "BP_HorizonAtriumElevatorNew_C",
     "BP_HorizonUnderpassElevator_C", "BP_MothmanElevator_C", "BP_ReactorExitElevator_C" }
+-- other scripted level pieces whose state functions are repeated for the partners (class -> function
+-- name patterns): roll-up doors, laser gates (a partner's copy left on kept hurting them), sand walls
+local MIRROR = { BP_PrologueDroneRollUpDoor_C = { "^StartRoll" }, BP_LaserGate_C = { "^TurnOffGate$", "^TurnOnGate$" },
+    BP_CaveCollapseSandWall_C = { "^Activate$", "^Deactivate$" } }
+for _, cls in ipairs(ELEV) do MIRROR[cls] = { "Door" } end
 local list, listAt, resendMs = {}, -99, 0
 local function far(a, b, d) return (a.X - b.X) ^ 2 + (a.Y - b.Y) ^ 2 + (a.Z - b.Z) ^ 2 > d * d end
 S.every(100, function(dt)
@@ -4902,12 +4907,16 @@ S.every(100, function(dt)
                     local name = a:GetFName():ToString()
                     local e = old[name] or { name = name }
                     e.a = a
-                    pcall(S.hookElevDoors, a)
+                    pcall(S.hookMirror, a)
                     if not e.start then pcall(function() e.start = a:K2_GetActorLocation() end) end
                     e.last = e.last or e.start
                     table.insert(list, e)
                 end
             end
+        end
+        for cls in pairs(MIRROR) do
+            local one = FindFirstOf(cls)
+            if valid(one) then pcall(S.hookMirror, one) end
         end
     end
     resendMs = resendMs + (dt or 100)
@@ -4927,19 +4936,32 @@ end)
 -- Their doors are parts of the elevator, opened by its own functions: the host repeats every door
 -- call (functions named ...Door...) to the partners ("ED|elevator|function").
 local hooked = {}
-function S.hookElevDoors(a)
+function S.hookMirror(a)
     local cls = a:GetClass()
     local cpath = cls:GetFullName():match("%s(.+)$")
-    if not cpath or hooked[cpath] then return end
+    local pats = MIRROR[cls:GetFName():ToString()]
+    if not cpath or not pats or hooked[cpath] then return end
     hooked[cpath] = true
+    log("mirroring " .. cls:GetFName():ToString())
     cls:ForEachFunction(function(fn)
         local fname = fn:GetFName():ToString()
-        if fname:find("Door") and not fname:find("Delegate") and not fname:find("Timel") then
+        local match = false
+        for _, pat in ipairs(pats) do if fname:find(pat) then match = true end end
+        if match and not fname:find("Delegate") and not fname:find("Timel") then
             -- (a door function that takes parameters fails on the partner's side: logged, harmless)
             pcall(function()
-                RegisterHook(cpath .. ":" .. fname, function(self)
+                RegisterHook(cpath .. ":" .. fname, function(self, ...)
                     local ok, n = pcall(function() return self:get():GetFName():ToString() end)
-                    if ok and S.hosting then S.toClients("ED", n, fname) end
+                    if not ok or not S.hosting then return end
+                    -- simple parameters go along (b1/b0, n<number>); anything else can't be repeated
+                    local args = {}
+                    for i = 1, select("#", ...) do
+                        local v = select(i, ...)
+                        pcall(function() v = v:get() end)
+                        if type(v) == "boolean" then table.insert(args, v and "b1" or "b0")
+                        elseif type(v) == "number" then table.insert(args, "n" .. v) end
+                    end
+                    S.toClients("ED", n, fname, table.concat(args, ","))
                 end)
             end)
         end
@@ -4948,11 +4970,16 @@ end
 local want, actors, lastStep = {}, {}, os.clock()
 handlers.client["EL"] = function(_, p) want[p[1]] = vec(p, 2) end
 handlers.client["ED"] = function(_, p)
-    for _, cls in ipairs(ELEV) do
+    for cls in pairs(MIRROR) do
         for _, x in ipairs(FindAllOf(cls) or {}) do
             if valid(x) and x:GetFName():ToString() == p[1] then
-                local ok, err = pcall(function() x[p[2]](x) end)
-                log("elevator " .. p[1] .. " " .. p[2] .. (ok and "" or (" failed: " .. tostring(err))))
+                local args = {}
+                for a in string.gmatch(p[3] or "", "[^,]+") do
+                    if a == "b1" then table.insert(args, true) elseif a == "b0" then table.insert(args, false)
+                    else table.insert(args, tonumber(a:sub(2))) end
+                end
+                local ok, err = pcall(function() x[p[2]](x, table.unpack(args)) end)
+                log("mirrored " .. p[1] .. " " .. p[2] .. (ok and "" or (" failed: " .. tostring(err))))
                 return
             end
         end

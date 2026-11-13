@@ -552,6 +552,12 @@
     `*Door*` класса (кроме Delegate/Timeline) → `ED|имя|функция`, гость вызывает свою (ForEachProperty у
     UFunction считает и локальные переменные — параметры так не посчитать). Проверено: KillCultists — гость
     доехал с хостом (-2642 у обоих); Prologue — OpenDoor/DisableDoorBlocker у гостя. Выключатель T2C.off.elev.
+102. **Повтор функций уровня (v0.9.27)** — то же, что двери лифтов, для MIRROR (класс → шаблоны имён):
+    BP_PrologueDroneRollUpDoor (StartRoll*), BP_LaserGate (TurnOnGate/TurnOffGate — с параметром; у гостя
+    включённый лазер наносит урон), BP_CaveCollapseSandWall (Activate/Deactivate). Хук получает параметры:
+    bool/число уходят в `ED|актёр|функция|b1,n5`, гость вызывает с ними. Хуки ставятся при пересборке списка
+    раз в 10 с (класс должен быть загружен; первые ≤10 с после подгрузки подуровня — без повтора).
+    Найдено сканом классов (scratchpad movscan.ps1): ворота библиотеки = BP_BaseDoorNew (обычные двери, DO).
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

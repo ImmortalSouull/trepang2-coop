@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.27"
+local VERSION = "0.9.28"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -1313,6 +1313,7 @@ S.every(250, function(dt)
     end
 end)
 
+handlers.client["BYE"] = function() S.hostQuitAt = os.time() end
 -- Client: if we lose the host (arena restart, network hiccup), keep trying to get back in.
 handlers.client["RJ"] = function() S.rejoin = { at = os.time() + 8, tries = 0 } end
 S.every(1000, function()
@@ -1334,7 +1335,15 @@ S.every(1000, function()
     end
     -- lost the host on the credits level: the game is over and the host's game went back to the
     -- main menu - no point reconnecting
-    if S.clientLevel and S.clientLevel:find("^Credits") then
+    if (S.clientLevel and S.clientLevel:find("^Credits")) or (S.hostQuitAt and os.time() - S.hostQuitAt < 120) then
+        local credits = S.clientLevel and S.clientLevel:find("^Credits")
+        S.hostQuitAt = nil
+        if not credits then
+            S.joined, S.rejoin, S.clientLevel = false, nil, nil
+            log("the host went back to the main menu")
+            S.notify(S.isRussian() and "CO-OP: хост вышел в главное меню" or "CO-OP: the host went back to the main menu")
+            return
+        end
         S.joined, S.rejoin, S.clientLevel = false, nil, nil
         log("the end: the host went back to the main menu")
         S.notify(S.isRussian() and "CO-OP: конец игры - хост вернулся в главное меню. Спасибо за игру!"
@@ -3063,7 +3072,13 @@ local function onGameOpenLevel(ctx, name, opts)
     end
     if not S.hosting then return end
     if n == "" or n == "None" or o:lower():find("listen") then return end
-    if n:find("FrontEndMenuMap") then return end   -- back to the main menu: hosting ends (watchdog)
+    if n:find("FrontEndMenuMap") then
+        -- back to the main menu: hosting ends (watchdog). Tell the partners right now (the travel happens
+        -- before our next tick), so they don't spend minutes trying to reconnect.
+        S.toClients("BYE")
+        pcall(pumpMessages)
+        return
+    end
     relisten = true
     local ok, err = pcall(function()
         GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")

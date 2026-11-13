@@ -558,6 +558,12 @@
     bool/число уходят в `ED|актёр|функция|b1,n5`, гость вызывает с ними. Хуки ставятся при пересборке списка
     раз в 10 с (класс должен быть загружен; первые ≤10 с после подгрузки подуровня — без повтора).
     Найдено сканом классов (scratchpad movscan.ps1): ворота библиотеки = BP_BaseDoorNew (обычные двери, DO).
+103. **Хост ушёл в меню (v0.9.28)** — в хуке OpenLevel хоста (FrontEndMenuMap): S.toClients("BYE") +
+    pumpMessages() прямо там (переход случится раньше следующего тика; ClientMessage успевает уйти — в этом
+    хуке мы и так вызываем OpenLevel). Гость: S.hostQuitAt → не переподключается, уведомление.
+    Концы миссий (scratchpad endchain.ps1, TryTrigger Trigger_EndLevel_C у хоста): KillGhosts и KillSyndicate →
+    SafeHouse_Persistent, гость следом. Trigger_EndLevel_Credits_SkipCutsceneInstant (KillSyndicate) → сразу
+    FrontEndMenuMap. Prologue/Cultists/Horizon/Mothman — без Trigger_EndLevel (конец через сцены/эвакуацию).
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

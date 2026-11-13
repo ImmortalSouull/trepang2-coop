@@ -572,6 +572,24 @@
     входе на уровень — IE (EnableInteraction/DisableInteraction) и MI (SetCurrentMission) теперь только при
     S.settled(3) (пешка гостя готова ≥3 с; сброс в LoadMapPre). Регрессия к 1.0: 50 арен «Орды» (hordesweep),
     7 сайд-миссий (sidetest), все карты кампании, бои 40+30 раундов — без падений.
+105. **Падение гостя после конца миссии (v0.9.30)** — AV 0x2b8 (то же место, что п. 98). tools/dumpstack.py
+    (раскрутка x64 по .pdata из минидампа) дал стек: EngineTick → тик актёров → TickActor ([vtable+0x408]) →
+    Tick ([vtable+0x460]) → ABaseCharacter (пересчёт CurrentPitchMax: присед/заложник/скольжение) →
+    Cast<APlayerController>(Controller)->PlayerCameraManager (+0x2B8) при пустом контроллере. Перебор гипотез
+    (нажатие «любой клавиши», катсцена, костюм) не помог; настоящая причина по журналу: попытка входа №1
+    (open) ещё шла, когда мод на попытке 2 ушёл в меню (S.joined=false) — соединение всё же завершилось, игра
+    на карте хоста, а мод не считает себя гостем (никаких защит) → тик чужой пешки. Теперь: задача раз в
+    100 мс — есть NetDriver.ServerConnection, но S.joined=false → S.joined=true («connected after all»);
+    BeginPlay-защита работает и при (not S.hosting and netDriver()). Под нагрузкой (запись видео) это было
+    почти каждый раз; после — 11/11 без падений (+5 кругов endloop, 6 перезагрузок чекпоинта).
+    Заодно у гостя: все пешки игроков, кроме созданной модом (S.spawningOwn при FinishSpawningActor),
+    SetActorTickInterval(1e6) + SetActorTickEnabled(false) + PrimaryActorTick.bCanEverTick=false (иначе
+    SetActorTickEnabled(true) из скриптов уровня включает тик обратно); у марионетки (Role 2) выключен тик
+    CharacterMovement; pc.Pawn/марионетке проставляется Controller. Катсцена хоста: ждёт гостей, которые
+    были до перехода, даже если замечена поздно (интро убежища идёт под экраном загрузки, видна с 24 с);
+    гость считается «на месте», когда шлёт сообщения ≥3 с (S.firstSeen). Гость подхватывает CS только при
+    S.settled(2). Trigger_EndLevel* гость не повторяет. Попытка «гость ждёт конца сцены» (CW) отменена:
+    Safehouse_Betrayal — одна длинная сцена, гостя выкидывало раз за разом.
 
 ## Сетевые сообщения T2Coop (строка `T2C|<тип>|поля...`)
 - Клиент → хост через `PlayerController:ServerChangeName` (надёжный RPC движка; имя игрока меняется — не страшно).

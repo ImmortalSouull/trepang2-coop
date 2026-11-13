@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "0.9.29"
+local VERSION = "0.9.30"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -40,6 +40,7 @@ end
 local running = false
 S.off = {}          -- dev: switch single features off (S.off.fire = true ...)
 S.logRx = os.getenv("T2RX") ~= nil   -- dev: log every received co-op message
+S.logTasks = os.getenv("T2TASKS") ~= nil   -- dev: log every task run for 20 s after a map load
 S.graceMs = 0       -- no tasks while a map loads (old world torn down) and briefly after
 local function runTasks(dtMs)
     if running then return end   -- never re-enter (game calls made by a task can tick hooks)
@@ -59,6 +60,7 @@ local function runTasks(dtMs)
                 local dt = t.acc
                 t.acc = 0
                 local c0 = S.prof and os.clock()
+                if S.logTasks and os.clock() - (S.loadedClock or 0) < 20 then print("[T2Coop] task " .. tostring(t.where) .. string.char(10)) end
                 local ok, res = pcall(t.fn, dt)
                 if c0 then
                     -- dev: T2C.prof = {} collects Lua time per task (T2C.profTop() to read)
@@ -154,12 +156,41 @@ local function stopLoadingScreen()
     -- Not once we're in the host's world (spawn point received): calling it while a client was
     -- setting up its pawn crashed the game (blueprint code writing into a widget already gone).
     if S.joined and S.client and S.client.spawn then return end
+    if S.off.ls then return end   -- dev switch
     local up = false
     pcall(function() up = valid(gi.CurrentLoadingWidget) end)
     if not up then return end
+    -- Not in the moment our pawn has arrived but isn't hooked up to the controller yet: the game's
+    -- key-press handler reads the pawn's controller's camera and crashed there (AV 0x2b8, a partner
+    -- joining after mission ends / checkpoint loads). With no pawn yet, or a ready one, it's fine.
+    local halfway = false
+    pcall(function()
+        for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+            local p = pc:IsLocalController() and pc.Pawn
+            if p and p:IsValid() and not (p.Controller and p.Controller:IsValid() and pc.PlayerCameraManager
+                and pc.PlayerCameraManager:IsValid()) then
+                halfway = true
+            end
+        end
+    end)
+    if halfway then return end
     -- "Press any key" the way the game does it. ForceStopLoadingScreen while the loading screen was
     -- still drawing on its own thread deadlocked the game (game thread vs loading-screen thread,
     -- both waiting on a lock) - the rare freeze right after starting to host / travelling.
+    if S.logRx then
+        pcall(function()
+            local st = "?"
+            for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
+                if pc:IsLocalController() then
+                    local p = pc.Pawn
+                    st = string.format("pc=%s pawn=%s ctrl=%s cam=%s", pc:GetFName():ToString(),
+                        tostring(p and p:IsValid() and p:GetFName():ToString()), tostring(p and p:IsValid() and p.Controller and p.Controller:IsValid()),
+                        tostring(pc.PlayerCameraManager and pc.PlayerCameraManager:IsValid()))
+                end
+            end
+            log("press any key: " .. st)
+        end)
+    end
     if S.forceStopLS then
         pcall(function() gi:ForceStopLoadingScreen() end)
     else
@@ -343,7 +374,23 @@ end
 local function guardPlayerPawn(actor)
     BasePlayerClass = BasePlayerClass or StaticFindObject("/Script/CPPFPS.BasePlayer")
     if not valid(BasePlayerClass) or not actor:IsA(BasePlayerClass) then return end
-    if not S.joined then return end
+    if not S.joined and (S.hosting or not netDriver()) then return end
+    -- Only the pawn we spawn ourselves (S.spawningOwn) ticks here. Any other player pawn - the host's
+    -- body, our puppet, the level's own player pawn that our controller grabs and lets go while we
+    -- join - never does: its native tick reads its controller's camera and crashed the moment that was
+    -- missing (AV 0x2b8; unwound from a dump: TickActor -> Tick -> ABaseCharacter).
+    if S.spawningOwn then return end
+    if true then
+        pcall(function() actor:SetActorTickInterval(1000000) end)
+        actor:SetActorTickEnabled(false)
+        -- and for good: SetActorTickEnabled(true) does nothing without bCanEverTick (a level script
+        -- switching cutscene mode turned it back on, and the first tick after that crashed)
+        pcall(function() actor.PrimaryActorTick.bCanEverTick = false end)
+        if actor.Role == 2 then S.stillPuppet(actor) end
+        S.slowTick = S.slowTick or {}
+        S.slowTick[actor:GetFullName()] = true
+        return
+    end
     if controllerReady(actor) then return end
     actor:SetActorTickEnabled(false)
     parked[actor:GetFullName()] = actor
@@ -365,6 +412,18 @@ function S.hookClientBeginPlay()
             end)
             if not ok then log("beginplay hook error: " .. tostring(err)) end
         end)
+    end)
+end
+
+-- Our puppet (the body the server gives us, "autonomous proxy" here) is hidden and never moved by us,
+-- but its movement component kept ticking: when the host repositioned it, the game's movement-mode
+-- change handler read the camera of its controller and crashed (AV 0x2b8; unwound from a dump: world
+-- tick -> component tick -> ABaseCharacter -> PlayerCameraManager of a missing controller).
+function S.stillPuppet(p)
+    pcall(function()
+        local cm = p.CharacterMovement
+        cm:SetComponentTickInterval(1000000)
+        cm:SetComponentTickEnabled(false)
     end)
 end
 
@@ -463,7 +522,12 @@ function S.toClient(pc, kind, ...) table.insert(outbox, { to = "pc", pc = pc, ms
 S.lastSeen = {}   -- host: remote controller FName -> os.time() of its last message
 local function dispatch(side, pc, text)
     if type(text) ~= "string" or text:sub(1, #PREFIX) ~= PREFIX then return end
-    if side == "server" and valid(pc) then S.lastSeen[pc:GetFName():ToString()] = os.time() end
+    if side == "server" and valid(pc) then
+        local n = pc:GetFName():ToString()
+        S.lastSeen[n] = os.time()
+        S.firstSeen = S.firstSeen or {}
+        S.firstSeen[n] = S.firstSeen[n] or os.time()
+    end
     local parts = split(text:sub(#PREFIX + 1))
     local kind = table.remove(parts, 1)
     local h = handlers[side][kind]
@@ -664,6 +728,8 @@ RegisterLoadMapPreHook(function()
     S.trQueue, S.trReadyAt = {}, nil
     S.doQueue, S.doReadyAt = {}, nil
     S.settleAt, S.miPending = nil, nil
+    S.cwSent = {}
+    S.slowTick = {}
     if S.cut then S.cut = { active = false } end
     S.gate, S.gateDone, S.lastTrig = nil, {}, nil
     S.expectPlayers, S.expectUntil = S.lastCount or 1, os.clock() + 120
@@ -683,6 +749,7 @@ end)
 local loadedAt = 0
 RegisterLoadMapPostHook(function()
     S.loading = false
+    S.loadedClock = os.clock()
     inbox = {}
     S.graceMs = 1500
     loadedAt = os.time()
@@ -751,7 +818,9 @@ local function fixClientController()
     a.Controller = pc
     a.PlayerState = pc.PlayerState
     pc.MyPlayer = a
-    GS:FinishSpawningActor(a, xf)
+    S.spawningOwn = true
+    pcall(function() GS:FinishSpawningActor(a, xf) end)
+    S.spawningOwn = false
     a:K2_SetActorRotation({ Pitch = 0, Yaw = yaw, Roll = 0 }, true)
     c.pawn, c.puppet = a, puppet
     c.spawnedAt = os.clock()
@@ -1333,6 +1402,26 @@ S.every(250, function(dt)
 end)
 
 handlers.client["BYE"] = function() S.hostQuitAt = os.time() end
+-- A join that was slower than our patience: we had already gone back to the menu to try again, then
+-- that earlier connection went through and the game is in the host's level - with the mod not acting
+-- as a partner (no guards: the game crashed seconds later). We are connected: we're the partner.
+S.every(100, function()
+    if S.hosting or S.joined or not S.lastIP then return end
+    local nd = netDriver()
+    if not nd then return end
+    local ok, conn = pcall(function() return nd.ServerConnection end)
+    if not ok or not conn or not conn:IsValid() then return end
+    S.joined, S.rejoin, S.rejoinMenuAt = true, nil, nil
+    log("connected to the host after all (a slow join) - playing as the partner")
+end)
+-- the host is in a cutscene: leave to the menu and come back in a few seconds (step 2 of a retry)
+handlers.client["CW"] = function()
+    if S.rejoinMenuAt then return end
+    log("host is in a cutscene - rejoining after it")
+    S.notify(S.isRussian() and "CO-OP: у хоста идёт сцена - заходим сразу после неё" or "CO-OP: the host is in a cutscene - joining right after it")
+    S.joined, S.rejoinTries, S.rejoinMenuAt = false, 1, os.time() + 8
+    pcall(openLevel, "/Game/Maps/Menu/FrontEndMenuMap", "")
+end
 -- Client: if we lose the host (arena restart, network hiccup), keep trying to get back in.
 handlers.client["RJ"] = function() S.rejoin = { at = os.time() + 8, tries = 0 } end
 S.every(1000, function()
@@ -3137,6 +3226,62 @@ S.every(1000, function()
     end
 end)
 
+-- Client: the same guard all the time, not only at BeginPlay. A player pawn can lose its controller
+-- later (the puppet when we take our own pawn back, pawns while a level comes in) - its native tick
+-- then crashed the partner's game (AV reading 0x2b8 = PlayerCameraManager of a null controller, seen
+-- on joining after checkpoint loads and mission ends).
+-- Other players' pawns here (the host's body, our hidden puppet) never need their own tick, and a level
+-- script (the safehouse arrival scene) switched one back on as we joined -> crash in the same frame.
+-- Their tick interval goes to a million seconds: switched on again, they still don't tick.
+S.slowTick = {}
+S.every(0, function()
+    if not S.joined or S.off.parkall then return end
+    -- The pawn our controller points at (our puppet, right after joining) can arrive before its
+    -- Controller field: the game's crouch / slide / hostage update then reads the camera through that
+    -- missing controller (AV 0x2b8, a partner joining while the host sat in the safehouse arrival
+    -- scene). Point it at our controller ourselves.
+    pcall(function()
+        local pc = localPC()
+        for _, p in ipairs({ pc.Pawn, S.client and S.client.puppet }) do
+            if p and p:IsValid() and not (p.Controller and p.Controller:IsValid()) then p.Controller = pc end
+        end
+    end)
+    if S.logRx then
+        local parts = {}
+        for _, p in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+            pcall(function()
+                local c = p.Controller
+                table.insert(parts, string.format("%s r%d c=%s t=%s cr=%s sl=%s", p:GetFName():ToString(), p.Role,
+                    tostring(c and c:IsValid() and c:GetFName():ToString()), tostring(p:IsActorTickEnabled()),
+                    tostring(p.bIsCrouched), tostring(p.bIsSliding)))
+            end)
+        end
+        local sig = table.concat(parts, " ; ")
+        if sig ~= S.pawnSig then S.pawnSig = sig; log("pawns: " .. sig) end
+    end
+    local mine = S.client and S.client.pawn
+    local mineKey = valid(mine) and mine:GetFullName() or ""
+    for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        local key = p:GetFullName()
+        if key ~= mineKey and not S.slowTick[key] then
+            S.slowTick[key] = true
+            if p.Role == 2 then S.stillPuppet(p) end
+            pcall(function() p:SetActorTickInterval(1000000) end)
+            pcall(function() p:SetActorTickEnabled(false) end)
+            pcall(function() p.PrimaryActorTick.bCanEverTick = false end)
+        end
+    end
+    for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        local ticking = false
+        pcall(function() ticking = p:IsActorTickEnabled() end)
+        if ticking and not controllerReady(p) then
+            pcall(function() p:SetActorTickEnabled(false) end)
+            parked[p:GetFullName()] = p
+            log("parked tick of " .. p:GetFName():ToString() .. " (lost its controller)")
+        end
+    end
+end)
+
 S.every(500, function()
     if loadedAt > 0 and os.time() - loadedAt >= 2 then
         -- the level's own player pawn has been possessed by now
@@ -3221,7 +3366,9 @@ end
 local TRIGGER_CLASS = "/Game/Blueprint/Tool/Triggers/BaseTriggerOnce.BaseTriggerOnce_C"
 local function clientNeverRuns(cls)
     local c = cls:lower()
-    return c:find("autosave") or c:find("spawn") or c:find("missionready")
+    -- (endlevel: the host's game ends the level and we follow it; our own copy loaded the next level
+    -- by itself and then had to reconnect)
+    return c:find("autosave") or c:find("spawn") or c:find("missionready") or c:find("endlevel")
 end
 local function clientLocal(cls)
     local c = cls:lower()
@@ -3419,7 +3566,18 @@ end
 local function gateCount(g)
     local k, pawns = 0, hostPlayerPawns()
     for _, p in ipairs(pawns) do
-        if dist2(p:K2_GetActorLocation(), g.point) <= (S.gatherR or GATHER_R) ^ 2 then k = k + 1 end
+        -- a partner counts once their game is really in (sending us messages for 3 s): the body the
+        -- host makes for them stands here the moment they connect, while their game is still loading
+        local here = true
+        pcall(function()
+            local c = p.Controller
+            if c and c:IsValid() and not c:IsLocalController() then
+                local n = c:GetFName():ToString()
+                local first, last = (S.firstSeen or {})[n], S.lastSeen[n]
+                here = first ~= nil and last ~= nil and os.time() - last <= 3 and os.time() - first >= 3
+            end
+        end)
+        if here and dist2(p:K2_GetActorLocation(), g.point) <= (S.gatherR or GATHER_R) ^ 2 then k = k + 1 end
     end
     local n = #pawns
     if os.clock() < (S.expectUntil or 0) then n = math.max(n, S.expectPlayers or 1) end
@@ -3485,7 +3643,16 @@ end
 S.every(250, function()
     if not S.hosting or not netDriver() or S.gate then return end
     local name, t = hostCutscene()
-    if name and not S.cut.active and not S.gateDone[name] and (t or 0) < 1.5 then
+    if name and not S.cut.active and S.cutSeenLog ~= name then
+        S.cutSeenLog = name
+        log(string.format("cutscene %s first seen at %.2f s, players %d, expect %s until %.0f s from now", name, t or -1,
+            #(FindAllOf("PlayerController") or {}), tostring(S.expectPlayers), (S.expectUntil or 0) - os.clock()))
+    end
+    -- (also later in: the safehouse arrival scene starts under the "press any key" screen and was
+    -- 24 s in when first seen; partners still on their way would join in the middle of it - it's
+    -- held for them too and restarts from the beginning)
+    local missing = os.clock() < (S.expectUntil or 0) and #(FindAllOf("PlayerController") or {}) < (S.expectPlayers or 1)
+    if name and not S.cut.active and not S.gateDone[name] and ((t or 0) < 1.5 or missing) then
         local players = #(FindAllOf("PlayerController") or {})
         if os.clock() < (S.expectUntil or 0) then players = math.max(players, S.expectPlayers or 1) end
         if players > 1 then
@@ -3545,6 +3712,10 @@ end
 handlers.client["CS"] = function(_, p)
     local name, t = p[1], tonumber(p[2]) or 0
     local c = S.cut
+    -- not before our own pawn is in play: a scene started while we were still joining took hold of
+    -- the half-set-up player and crashed the game (AV 0x2b8 - joining during the safehouse arrival
+    -- scene). The host repeats this twice a second, so we just join the scene a moment later.
+    if not c.active and not S.settled(2) then c.lastMsg = os.clock() return end
     local actor = findSequence(name)
     if not actor or not valid(actor.SequencePlayer) then
         if c.missing ~= name then c.missing = name; log("cutscene " .. tostring(name) .. " not loaded here") end

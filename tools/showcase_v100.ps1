@@ -32,8 +32,8 @@ function PutClaudeBack {
 function Cmd($inst, $lua, $wait = 1) { & "$D\t2.ps1" -Inst $inst -Mod T2Coop -Cmd $lua -Wait $wait | Out-Null }
 function WaitPartner($max = 20) {
   for ($i = 0; $i -lt $max; $i++) {
-    Cmd B 'pcall(T2C.stopLoadingScreen); return "ok"' 1
-    $r = & "$D\t2.ps1" -Inst B -Mod T2Coop -Cmd 'return "B "..T2C.where()' -Wait 2 -Grep "cmd ok"
+    # (no "press any key" from here: the mod does that itself)
+    $r = & "$D\t2.ps1" -Inst B -Mod T2Coop -Cmd 'return "B "..T2C.where()' -Wait 3 -Grep "cmd ok"
     if ("$r" -match "PlayerBP_C") { return }
   }
 }

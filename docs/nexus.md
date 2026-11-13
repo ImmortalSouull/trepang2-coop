@@ -1,21 +1,21 @@
 # Nexus Mods page — Trepang2 Co-op
 
 ## Name
-Trepang2 Co-op (Horde + Campaign) - Beta
+Trepang2 Co-op (Horde + Campaign)
 
 ## Version
-0.9.30
+1.0.0
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
 
 ## Short summary (Nexus "Brief overview", max ~350 characters)
-Play Trepang2 together: co-op Horde and the story campaign. Friends follow the host through missions, checkpoints and cutscenes (which wait for everyone). Your safehouse look is shared, partners are fully animated. Join by IP or Steam invite. Beta - the whole campaign is the goal for v1.0.
+Play Trepang2 together: co-op Horde and the story campaign. Friends follow the host through missions, checkpoints and cutscenes (which wait for everyone). Your safehouse look is shared, partners are fully animated. Join by IP or Steam invite. v1.0: the whole campaign in co-op.
 
 ## Description (paste into the Nexus description editor, BBCode)
 
 [size=5][b]Trepang2 Co-op[/b][/size]
-[i]Unofficial mod. Beta: Horde co-op is complete, the story campaign is playable together and getting more complete with every version. Goal for v1.0: the whole campaign in co-op.[/i]
+[i]Unofficial mod. Version 1.0: Horde and the whole story campaign are playable together - every map, arena and side mission has been played in co-op. Showcase video on the page.[/i]
 
 Trepang2 is a single-player game. This mod switches on Unreal Engine's own networking and adds everything the game is missing for two (or more) players: [b]Horde / Survival[/b] together and the [b]story campaign[/b] together.
 
@@ -83,9 +83,9 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]X[/b] (gamepad: d-pad left) - ping: a marker with your name where you look, for everyone, 8 seconds. On an enemy it sticks to them and says ENEMY.
 [/list]
 
-[size=4][b]Known issues (beta)[/b][/size]
+[size=4][b]Known issues[/b][/size]
 [list]
-[*]Campaign: boss fights (Mothman, the finale) have not been played through in co-op yet - please report how they go.
+[*]Boss fights are shared like every other enemy, but their scripted scenes have not been played start to finish in co-op yet - please report how they go.
 [*]Checked in co-op: every campaign map (join, level restarts, checkpoint reloads), the Safehouse betrayal, the credits and the end of the game, side missions, all Horde arenas.
 [*]A partner's gun shows without its attachments and skin on the others' screens.
 [*]After a level change friends reconnect on their own a few seconds after the host's level is up (about 15 seconds on a restart).
@@ -100,8 +100,9 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]v0.7.4[/b] - done: interactions (terminals, buttons, scenes), objective markers, human shields, partner fire
 [*][b]v0.8.0-0.8.4[/b] - done: boss health bars for all, enemy health setting in the menu, side missions, mission weapon and gas mask for friends
 [*][b]v0.8.x[/b] - bosses' special mechanics, special levels, side missions
-[*][b]v0.9[/b] - done: spectating while down, progress for every player, rejoining, elevators and level pieces, end of the game; next: a full campaign run together
-[*][b]v1.0[/b] - the whole Trepang2 campaign + Horde playable in co-op
+[*][b]v0.9[/b] - done: spectating while down, progress for every player, rejoining, elevators and level pieces, end of the game
+[*][b]v1.0[/b] - done: the whole Trepang2 campaign + Horde playable in co-op
+[*][b]next[/b] - co-op for up to 4 players
 [/list]
 
 [size=4][b]Uninstall[/b][/size]

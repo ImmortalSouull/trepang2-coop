@@ -1,4 +1,4 @@
-TREPANG2 CO-OP  (unofficial mod, alpha)
+TREPANG2 CO-OP  (unofficial mod)
 =======================================
 Co-op for Trepang2: Horde (Survival) mode and, since v0.6, the story campaign (early).
 Русская инструкция: README.ru.md

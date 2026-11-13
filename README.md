@@ -2,13 +2,13 @@
 
 **English** · [Русский](dist_src/README.ru.md)
 
-An unofficial mod that adds **co-op** to **Trepang2**: **Horde (Survival)** mode and, since v0.6, the **story campaign** (early).
+An unofficial mod that adds **co-op** to **Trepang2**: **Horde (Survival)** mode and the whole **story campaign** (since v1.0).
 Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) mod loader.
 
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v0.9.30 (alpha)** — download it from [Releases](../../releases).
+**Current version: v1.0.0** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -32,7 +32,7 @@ the friend accepts the invite (or clicks "Join game" on the host in the Steam fr
 host's name under "Steam friends hosting" in the F4 menu) and joins automatically.
 Not yet tested between two different Steam accounts.
 
-## Campaign (early, v0.6)
+## Campaign
 Side missions work the same way. Play the campaign as usual; in the safehouse or in a mission the host presses **F4 → HOST** (the level
 reloads from the last checkpoint with the server on) and the friend joins. Wherever the host's game goes
 (mission start, next level, checkpoint, restart) friends follow automatically. Story triggers are shared,
@@ -72,7 +72,10 @@ the story for everyone - and story objective markers show for every player.
 - The end of the game works in co-op: after the final credits partners stay in the main menu ("the end").
 
 ## Known issues
-See [docs/releases](docs/releases). Campaign co-op is in beta: boss fights (Mothman, the finale) have not been played through in co-op yet - reports welcome.
+See [docs/releases](docs/releases). v1.0: every campaign map, Horde arena and side mission has been played in co-op with joins, restarts, checkpoint reloads, mission ends and the credits. Boss fights are shared like every other enemy, but their scripted scenes have not been played start to finish in co-op yet - reports welcome.
+
+## Next
+Co-op for up to 4 players.
 
 ## For developers
 `mod/T2Coop/Scripts/main.lua` is the whole mod. `MODLOG.md` documents every engine finding,

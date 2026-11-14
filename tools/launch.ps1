@@ -5,11 +5,14 @@ $roots = @{
   A = "C:\Program Files (x86)\Steam\steamapps\common\Trepang2\CPPFPS\Binaries\Win64"
   B = "C:\Users\PC\Trepang2_B\CPPFPS\Binaries\Win64"
   C = "C:\Users\PC\Trepang2_C\CPPFPS\Binaries\Win64"
+  D = "C:\Users\PC\Trepang2_D\CPPFPS\Binaries\Win64"
 }
-$pos = @{ A = @(0, 0); B = @(1290, 0); C = @(0, 740) }
+$pos = @{ A = @(0, 0); B = @(1290, 0); C = @(0, 740); D = @(1290, 740) }
 if ($Kill) { Get-Process CPPFPS* -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 3 }
 foreach ($i in $Which) {
   $w = $roots[$i]
+  # keep the last session's log (a crash before a restart is otherwise lost)
+  if (Test-Path "$w\ue4ss\UE4SS.log") { Move-Item "$w\ue4ss\UE4SS.log" "$w\ue4ss\UE4SS.prev.log" -Force -ErrorAction SilentlyContinue }
   Remove-Item "$w\ue4ss\UE4SS.log" -ErrorAction SilentlyContinue
   Set-Content "$w\ue4ss\Mods\T2Dev\cmd.txt" "" -NoNewline
   Start-Process "$w\CPPFPS-Win64-Shipping.exe" -WorkingDirectory $w -ArgumentList "-windowed", "-ResX=1280", "-ResY=720", "-WinX=$($pos[$i][0])", "-WinY=$($pos[$i][1])"

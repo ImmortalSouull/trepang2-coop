@@ -160,6 +160,17 @@ local function stopLoadingScreen()
     local up = false
     pcall(function() up = valid(gi.CurrentLoadingWidget) end)
     if not up then return end
+    -- Not in the first seconds after a map load: the loading movie is then switching from its own
+    -- Slate thread back to the game thread, and stopping it in that moment deadlocked the game (both
+    -- threads waiting on the same lock; the host froze at "hosting" about 1 in 6 times with 4 game
+    -- copies running). A real player never presses that early either.
+    if S.loading or os.clock() - (S.loadedClock or -99) < 4 then return end
+    -- Only the loading screen of the level we are in (the one still up once that load had finished):
+    -- a new one means the next travel is starting and its movie thread is just spinning up - stopping
+    -- it then crashed a partner reconnecting after a restart (AV in the loading screen's Slate thread).
+    local wname = ""
+    pcall(function() wname = gi.CurrentLoadingWidget:GetFullName() end)
+    if S.lsKnown == nil or wname ~= S.lsKnown then return end
     -- Not in the moment our pawn has arrived but isn't hooked up to the controller yet: the game's
     -- key-press handler reads the pawn's controller's camera and crashed there (AV 0x2b8, a partner
     -- joining after mission ends / checkpoint loads). With no pawn yet, or a ready one, it's fine.
@@ -191,6 +202,10 @@ local function stopLoadingScreen()
             log("press any key: " .. st)
         end)
     end
+    -- One press, then give the movie player time to shut its loading thread down: pressing again while
+    -- it was stopping is the likeliest way into that same deadlock (we used to press every second).
+    if os.clock() - (S.lsPressedAt or -99) < 6 then return end
+    S.lsPressedAt = os.clock()
     if S.forceStopLS then
         pcall(function() gi:ForceStopLoadingScreen() end)
     else
@@ -199,6 +214,16 @@ local function stopLoadingScreen()
 end
 
 S.stopLoadingScreen = stopLoadingScreen
+-- right after a map load (the first task run): remember which loading screen belongs to this level
+S.every(250, function()
+    if S.lsKnown ~= nil or S.loading then return end
+    local name = ""
+    pcall(function()
+        local w = FindFirstOf("GameInstanceBP_C").CurrentLoadingWidget
+        if valid(w) then name = w:GetFullName() end
+    end)
+    S.lsKnown = name
+end)
 
 -- The "press any key" loading screen blocks travel until dismissed; after we start a travel,
 -- keep dismissing it for a few seconds (both the old and the new map show it).
@@ -222,6 +247,7 @@ local function openLevel(map, opts)
 end
 
 function S.host(map)
+    pcall(S.previewDestroy)
     S.hosting = true
     S.awaitHostLoad = true
     S.travelReqAt = os.clock()
@@ -233,6 +259,7 @@ function S.host(map)
 end
 
 function S.join(ip)
+    pcall(S.previewDestroy)   -- (see S.previewUpdate: nothing of the preview may live through the join)
     S.hosting = false
     S.joined = true
     if S.hookClientBeginPlay then S.hookClientBeginPlay() end
@@ -311,7 +338,11 @@ local function setupRemotePlayers()
     local gm = FindFirstOf("GameModeBase")
     if not valid(gm) then return end
     for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
-        if valid(pc) and not pc:IsLocalController() then
+        -- (not a controller whose connection is already gone: a partner that reconnected leaves its
+        -- old one behind for a moment - giving that a pawn every half second only made noise)
+        local live = false
+        pcall(function() live = valid(pc.NetConnection) and valid(pc.PlayerState) end)
+        if valid(pc) and not pc:IsLocalController() and live then
             local key = pc:GetFullName()
             if not valid(pc.Pawn) then
                 gm:RestartPlayer(pc)
@@ -548,9 +579,16 @@ local function pumpMessages()
         local batch = outbox; outbox = {}
         local me = localPC()
         T2CName = T2CName or FName("T2C", EFindName.FNAME_Add)
+        -- Broadcasts only go to partners that are in the level and talking to us already (every partner
+        -- sends its own state once its pawn is up). One still loading doesn't ack anything, and what
+        -- piled up for it overflowed its connection's reliable buffer -> dropped (4 players). Messages
+        -- to one partner (spawn point, level state for a newcomer) still go straight away.
         local remotes = {}
         for _, pc in ipairs(FindAllOf("PlayerController") or {}) do
-            if valid(pc) and not pc:IsLocalController() then table.insert(remotes, pc) end
+            if valid(pc) and not pc:IsLocalController() then
+                local ok, n = pcall(function() return pc:GetFName():ToString() end)
+                if not S.hosting or (ok and S.firstSeen and S.firstSeen[n]) then table.insert(remotes, pc) end
+            end
         end
         for _, m in ipairs(batch) do
             if m.to == "server" then
@@ -750,6 +788,7 @@ local loadedAt = 0
 RegisterLoadMapPostHook(function()
     S.loading = false
     S.loadedClock = os.clock()
+    S.lsKnown = nil
     inbox = {}
     S.graceMs = 1500
     loadedAt = os.time()
@@ -1308,7 +1347,7 @@ S.every(30, function()
             sp.on = false
             pcall(function() pc:SetViewTargetWithBlend(p, 0.3, 0, 0, false) end)
         end
-        sp.since, sp.self = nil, false
+        sp.since, sp.self, sp.idx = nil, false, nil
         return
     end
     sp.since = sp.since or os.clock()
@@ -1316,15 +1355,24 @@ S.every(30, function()
     S.LMB = S.LMB or { KeyName = FName("LeftMouseButton", EFindName.FNAME_Add) }
     local down = false
     pcall(function() down = pc:IsInputKeyDown(S.LMB) end)
-    if down and not sp.lmb then sp.self = not sp.self end
-    sp.lmb = down
-    local target = p
-    if not sp.self then
-        local mine = p:GetFullName()
-        for _, o in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
-            if o:GetFullName() ~= mine and not o.bHidden and not o.bIsDead then target = o break end
+    -- partners to watch: standing ones first (a downed partner's view is no help); left click goes
+    -- partner 1 -> partner 2 -> ... -> your own view -> partner 1 (3+ players)
+    local mine = p:GetFullName()
+    local up, low = {}, {}
+    for _, o in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        if o:GetFullName() ~= mine and not o.bHidden and not o.bIsDead then
+            local st
+            pcall(function() st = S.hpOf[o.PlayerState.PlayerId] end)
+            table.insert((st and st.down) and low or up, o)
         end
     end
+    for _, o in ipairs(low) do table.insert(up, o) end
+    sp.idx = sp.idx or 1
+    if down and not sp.lmb then sp.idx = sp.idx + 1 end
+    if sp.idx > #up + 1 then sp.idx = 1 end
+    sp.lmb = down
+    sp.self = sp.idx > #up
+    local target = sp.self and p or up[sp.idx]
     local cur
     pcall(function() cur = pc:GetViewTarget() end)
     if not valid(cur) or cur:GetFullName() ~= target:GetFullName() then
@@ -2705,6 +2753,12 @@ end
 function S.previewUpdate(image)
     local pv = S.preview
     pv.image = image or pv.image
+    -- No preview while a join / level change is under way: a figure spawned while the connection to
+    -- the host was pending crashed the game (Lua -> SetSkeletalMesh in a world about to go).
+    if S.loading or S.awaitHostLoad or (S.joined and not S.settled(2)) then
+        if valid(pv.cam) and not pv.paused then S.previewPause() end
+        return
+    end
     local pc = localPC()
     if not valid(pc) or not valid(pc.Pawn) or not valid(pv.image) then return end
     local want = S.mySkin or ""
@@ -2917,6 +2971,11 @@ end
 
 S.every(250, function()
     if not (S.hosting or S.joined) or not netDriver() then S.bodies = {} return end
+    -- Not while the level is still settling: swapping a body's mesh re-runs its animation blueprint,
+    -- which crashed a partner arriving in the safehouse (AV writing 0x230 under SetSkeletalMesh ->
+    -- UpdateAnimation) - the same "too early" family as the 0x2b8 crashes.
+    if S.joined and not S.settled(3) then return end
+    if os.clock() - (S.loadedClock or -99) < 3 then return end
     local seen = {}
     for _, p in ipairs(otherBodies()) do
         showAsThirdPerson(p)
@@ -3052,10 +3111,15 @@ S.every(66, function()
         if not valid(pc) or not valid(pc.Pawn) then return end
         local list = FindAllOf("PlayerController") or {}
         if #list < 2 then return end
-        pcall(function() S.toClients("AS", pidOf(pc.Pawn) or -1, readAnimState(pc.Pawn)) end)
+        -- everyone's state in ONE message (was one per player: with 4 players ~40 reliable messages a
+        -- second to every partner, and a partner still loading the level - not acking - overflowed the
+        -- connection's reliable buffer and was dropped, again and again)
+        local parts = {}
+        pcall(function() table.insert(parts, pidOf(pc.Pawn) or -1); table.insert(parts, readAnimState(pc.Pawn)) end)
         for pid, st in pairs(S.animState) do
-            if os.clock() - st.t < 1 then S.toClients("AS", pid, st.raw) end
+            if os.clock() - st.t < 1 then table.insert(parts, pid); table.insert(parts, st.raw) end
         end
+        if #parts > 0 then S.toClients("AM", table.unpack(parts)) end
     end
 end)
 handlers.server["AS"] = function(pc, p)
@@ -3065,6 +3129,12 @@ end
 handlers.client["AS"] = function(_, p)
     local pid = tonumber(p[1])
     if pid then S.animState[pid] = parseAnimState(p, 2) end
+end
+handlers.client["AM"] = function(_, p)
+    for i = 1, #p - 7, 8 do
+        local pid = tonumber(p[i])
+        if pid then S.animState[pid] = parseAnimState(p, i + 1) end
+    end
 end
 
 -- Dual wielding: the third-person body holds one gun; for a partner with two, a look-only copy of
@@ -3270,6 +3340,11 @@ S.every(0, function()
             pcall(function() p:SetActorTickEnabled(false) end)
             pcall(function() p.PrimaryActorTick.bCanEverTick = false end)
         end
+        -- our server-side body (the puppet we play past) stays hidden: level scripts that show the
+        -- players again after a scene (Prologue intro) showed it too, standing at the map origin
+        if key ~= mineKey and p.Role == 2 and p.bHidden == false then
+            pcall(function() p:SetActorHiddenInGame(true) end)
+        end
     end
     for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
         local ticking = false
@@ -3280,6 +3355,29 @@ S.every(0, function()
             log("parked tick of " .. p:GetFName():ToString() .. " (lost its controller)")
         end
     end
+end)
+
+-- Host: player bodies nobody controls. A checkpoint made while partners were in the level keeps their
+-- bodies in the save; loading it brought them back - extra players standing around for everyone
+-- (seen with 4 players: 7 bodies). Any player body other than ours with no controller for 8 s goes.
+S.orphanSince = {}
+S.every(1000, function()
+    if not isServer() or S.loading or (S.cut and S.cut.active) then S.orphanSince = {} return end
+    local mine = valid(localPC()) and localPC().Pawn
+    local seen = {}
+    for _, p in ipairs(S.allOf("/Script/CPPFPS.BasePlayer")) do
+        if valid(p) and not same(p, mine) and not valid(p.Controller) and p.Role == 3 then
+            local key = p:GetFullName()
+            seen[key] = true
+            S.orphanSince[key] = S.orphanSince[key] or os.clock()
+            if os.clock() - S.orphanSince[key] > 8 then
+                log("removing a player body nobody controls: " .. p:GetFName():ToString())
+                pcall(function() p:K2_DestroyActor() end)
+                S.orphanSince[key] = nil
+            end
+        end
+    end
+    for k in pairs(S.orphanSince) do if not seen[k] then S.orphanSince[k] = nil end end
 end)
 
 S.every(500, function()
@@ -6649,13 +6747,13 @@ local function buildMenu()
         button(tree, root, "JOIN", 440, y + 162, 150, "join", nil, true)
         button(tree, root, "LEAVE", 600, y + 162, MENU_W - 600, "leave", nil, true)
         section(tree, root, "PLAYERS", y + 236)
-        menu.players = label(tree, root, "", 0, y + 274, "Players", 20, W2 + 40, false, 96)
+        menu.players = label(tree, root, "", 0, y + 274, "Players", 20, W2 + 40, false, 120)
         menu.toHost = button(tree, root, "TO THE HOST", W2 + 50, y + 274, W2 - 40, "tohost", nil, true)
-        section(tree, root, "NETWORK", y + 376)
-        menu.net = label(tree, root, "", 0, y + 414, "Net", 18, MENU_W, true)
-        button(tree, root, "INVITE  (STEAM)", 0, y + 446, W2, "invite")
-        button(tree, root, "IP / STEAM MODE", W2 + 10, y + 446, W2, "netmode")
-        y = y + 512
+        section(tree, root, "NETWORK", y + 400)
+        menu.net = label(tree, root, "", 0, y + 438, "Net", 18, MENU_W, true)
+        button(tree, root, "INVITE  (STEAM)", 0, y + 470, W2, "invite")
+        button(tree, root, "IP / STEAM MODE", W2 + 10, y + 470, W2, "netmode")
+        y = y + 536
         if S.netMode == "steam" then
             menu.friends = label(tree, root, "", 0, y, "Friends", 18, MENU_W, true)
             menu.fslots = {}
@@ -6719,7 +6817,10 @@ local function playerList()
         local myPs
         pcall(function() myPs = myPawn().PlayerState:GetFullName() end)
         for _, ps in ipairs(FindAllOf("PlayerState") or {}) do
-            local n = S.stateName(ps)
+            -- (not the inactive copy the engine keeps of a player who left / reconnected)
+            local gone = false
+            pcall(function() gone = ps.bIsInactive or ps:IsActorBeingDestroyed() end)
+            local n = not gone and S.stateName(ps)
             if n then
                 -- health (DOWN) and ping next to each name
                 local extra = ""

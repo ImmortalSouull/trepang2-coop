@@ -1,16 +1,20 @@
 """Unwind the crashing thread of a UE4 minidump with the modules' own x64 unwind data (.pdata), no symbols.
 Prints module+RVA per frame (feed exe RVAs to disasm.py / natives.py).
-Usage: python dumpstack.py <UE4Minidump.dmp> [max_frames]
+Usage: python dumpstack.py <UE4Minidump.dmp> [max_frames] [--threads N]
+  --threads N: a hang dump (no exception): unwind the first N threads of the thread list instead.
 Module files are read from the paths recorded in the dump.
 """
+import mmap
 import struct
 import sys
 
 import pefile
 
 DMP = sys.argv[1]
-MAXF = int(sys.argv[2]) if len(sys.argv) > 2 else 40
-d = open(DMP, "rb").read()
+MAXF = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2].isdigit() else 40
+NTHREADS = int(sys.argv[sys.argv.index("--threads") + 1]) if "--threads" in sys.argv else 0
+_fh = open(DMP, "rb")
+d = mmap.mmap(_fh.fileno(), 0, access=mmap.ACCESS_READ)
 nstreams, sdir = struct.unpack_from("<II", d, 8)
 streams = {}
 for i in range(nstreams):
@@ -160,29 +164,45 @@ def unwind(regs, img, func, rva):
     return regs
 
 
-# exception context (6)
-_, r = streams[6]
-tid = struct.unpack_from("<I", d, r)[0]
-ctx_size, ctx_rva = struct.unpack_from("<II", d, r + 8 + 152)
-ctx = d[ctx_rva: ctx_rva + ctx_size]
-regs = {name: struct.unpack_from("<Q", ctx, 0x78 + i * 8)[0] for i, name in enumerate(REG)}
-regs["rip"] = struct.unpack_from("<Q", ctx, 0xF8)[0]
-print("thread", tid)
-for n in range(MAXF):
-    rip = regs["rip"]
-    m = modof(rip)
-    name = (m[2].replace("\\", "/").split("/")[-1] + "+%x" % (rip - m[0])) if m else hex(rip)
-    print("%2d %s" % (n, name))
-    if not m:
-        break
-    img, funcs = pe_of(m)
-    if img is None:
-        break
-    f = lookup(funcs, rip - m[0])
-    if not f:   # leaf
-        regs["rip"] = q(regs["rsp"])
-        regs["rsp"] += 8
-    else:
-        regs = unwind(dict(regs), img, f, rip - m[0])
-    if not regs or not regs.get("rip"):
-        break
+def walk(ctx, title):
+    regs = {name: struct.unpack_from("<Q", ctx, 0x78 + i * 8)[0] for i, name in enumerate(REG)}
+    regs["rip"] = struct.unpack_from("<Q", ctx, 0xF8)[0]
+    print(title)
+    for n in range(MAXF):
+        rip = regs["rip"]
+        m = modof(rip)
+        name = (m[2].replace("\\", "/").split("/")[-1] + "+%x" % (rip - m[0])) if m else hex(rip)
+        print("%2d %s" % (n, name))
+        if not m:
+            # a jump into data (a call through a freed object): take the return address on the stack
+            if n == 0:
+                regs["rip"] = q(regs["rsp"]); regs["rsp"] += 8
+                continue
+            break
+        img, funcs = pe_of(m)
+        if img is None:
+            break
+        f = lookup(funcs, rip - m[0])
+        if not f:   # leaf
+            regs["rip"] = q(regs["rsp"])
+            regs["rsp"] += 8
+        else:
+            regs = unwind(dict(regs), img, f, rip - m[0])
+        if not regs or not regs.get("rip"):
+            break
+
+
+if NTHREADS:
+    _, r = streams[3]
+    n = struct.unpack_from("<I", d, r)[0]
+    for i in range(min(n, NTHREADS)):
+        e = r + 4 + i * 48
+        tid = struct.unpack_from("<I", d, e)[0]
+        csize, crva = struct.unpack_from("<II", d, e + 40)
+        walk(d[crva: crva + csize], "thread %d (#%d)" % (tid, i))
+else:
+    # exception context (6)
+    _, r = streams[6]
+    tid = struct.unpack_from("<I", d, r)[0]
+    ctx_size, ctx_rva = struct.unpack_from("<II", d, r + 8 + 152)
+    walk(d[ctx_rva: ctx_rva + ctx_size], "thread %d" % tid)

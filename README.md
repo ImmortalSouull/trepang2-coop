@@ -46,7 +46,7 @@ the story for everyone - and story objective markers show for every player.
 - Each player plays their own full character; enemies, waves and money run on the host.
 - Shots, damage (incl. headshots) and enemy deaths synced both ways; enemies hurt both players.
 - Horde HUD for the partner; down & revive instead of death; auto-reconnect after an arena restart.
-- Partners can use the Horde shop (shared money); partner picks up dropped / bought weapons; partner kills earn Horde money; partner markers; 3+ players.
+- Partners can use the Horde shop (shared money); partner picks up dropped / bought weapons; partner kills earn Horde money; partner markers; up to 4 players.
 - Partners' reload, weapon melee strike, grenade throw and weapon switch are shown on their body.
 - Tougher enemies for more players: +0..200% health per extra player (F4 menu - ENEMY HEALTH, default +50%).
 - Boss health bars for every player.
@@ -68,14 +68,16 @@ the story for everyone - and story objective markers show for every player.
 - F6 quick access: weapon mods anywhere; in the safehouse missions, outfit, combat simulator, cheats; in Horde the shop.
 - Elevators, roll-up doors, laser gates and other scripted level pieces move / change for everyone.
 - Fell off the map? You're brought back to the host automatically.
+- Up to 4 players (F4 list, spectating cycles through every partner, joins and level changes tested with 4 game copies).
 - Checkpoint reloads and joining a mission in progress no longer crash the partner; every campaign map checked with a partner (join + level restarts).
 - The end of the game works in co-op: after the final credits partners stay in the main menu ("the end").
 
 ## Known issues
 See [docs/releases](docs/releases). v1.0: every campaign map, Horde arena and side mission has been played in co-op with joins, restarts, checkpoint reloads, mission ends and the credits. Boss fights are shared like every other enemy, but their scripted scenes have not been played start to finish in co-op yet - reports welcome.
 
-## Next
-Co-op for up to 4 players.
+Up to 4 players: every feature was run through big automated test passes with 1, 2, 3 and 4 game copies.
+
+Steam mode: one report of the joining player getting stuck on the title screen (not reproducible with a single Steam account yet) - IP mode with Radmin VPN / ZeroTier works meanwhile; a UE4SS.log from the joining player helps.
 
 ## For developers
 `mod/T2Coop/Scripts/main.lua` is the whole mod. `MODLOG.md` documents every engine finding,

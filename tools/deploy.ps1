@@ -3,7 +3,8 @@ $proj = Split-Path $PSScriptRoot -Parent
 $targets = @(
   "C:\Program Files (x86)\Steam\steamapps\common\Trepang2\CPPFPS\Binaries\Win64\ue4ss\Mods",
   "C:\Users\PC\Trepang2_B\CPPFPS\Binaries\Win64\ue4ss\Mods",
-  "C:\Users\PC\Trepang2_C\CPPFPS\Binaries\Win64\ue4ss\Mods"
+  "C:\Users\PC\Trepang2_C\CPPFPS\Binaries\Win64\ue4ss\Mods",
+  "C:\Users\PC\Trepang2_D\CPPFPS\Binaries\Win64\ue4ss\Mods"
 )
 $mods = Get-ChildItem "$proj\mod" -Directory | ForEach-Object Name
 # Refuse to deploy Lua that doesn't compile (saves a full game restart per typo).

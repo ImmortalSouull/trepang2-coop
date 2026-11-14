@@ -17,7 +17,7 @@ Play Trepang2 together: co-op Horde and the story campaign. Friends follow the h
 [size=5][b]Trepang2 Co-op[/b][/size]
 [i]Unofficial mod. Version 1.0: Horde and the whole story campaign are playable together - every map, arena and side mission has been played in co-op. Showcase video on the page.[/i]
 
-Trepang2 is a single-player game. This mod switches on Unreal Engine's own networking and adds everything the game is missing for two (or more) players: [b]Horde / Survival[/b] together and the [b]story campaign[/b] together.
+Trepang2 is a single-player game. This mod switches on Unreal Engine's own networking and adds everything the game is missing for up to 4 players: [b]Horde / Survival[/b] together and the [b]story campaign[/b] together.
 
 [size=4][b]Campaign co-op[/b][/size]
 [list]
@@ -59,7 +59,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]Slow-mo for everyone[/b]: when the host or a partner uses slow-mo (Q), time slows down for all players together (a partner's lasts 5 s, Q again ends it).
 [*][b]Invisibility (E) works in co-op[/b]: an invisible partner disappears for everyone (body, enemy look and gun) and the enemies stop seeing them.
 [*]Steam names over partner markers (with distance, visible through walls) with their health ("Name 60%", "Name - DOWN"), "joined" / "left" notices.
-[*]Tested with 3 players; works with more.
+[*]Up to 4 players - every feature tested with 1, 2, 3 and 4 players.
 [/list]
 
 [size=4][b]Connecting[/b][/size]
@@ -91,7 +91,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*]After a level change friends reconnect on their own a few seconds after the host's level is up (about 15 seconds on a restart).
 [*]Dual wielding shows both guns but with a two-handed pose.
 [*]Ammo and health pickups are separate for each player.
-[*]Steam mode is not yet tested between two different Steam accounts; players on a non-Steam copy can only use IP mode.
+[*]Steam mode is not yet tested between two different Steam accounts (one report of the joining player stuck on the title screen - use IP mode with Radmin VPN / ZeroTier meanwhile, and please send the joiner's UE4SS.log); players on a non-Steam copy can only use IP mode.
 [*]While installed, the game's online subsystem is set to "Null" (needed to host). To undo: delete the [OnlineSubsystem] section from %LOCALAPPDATA%\CPPFPS\Saved\Config\WindowsNoEditor\Engine.ini
 [/list]
 

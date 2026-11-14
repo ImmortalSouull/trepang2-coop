@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign)
 
 ## Version
-1.0.0
+1.0.1
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)
@@ -15,7 +15,7 @@ Play Trepang2 together: co-op Horde and the story campaign. Friends follow the h
 ## Description (paste into the Nexus description editor, BBCode)
 
 [size=5][b]Trepang2 Co-op[/b][/size]
-[i]Unofficial mod. Version 1.0: Horde and the whole story campaign are playable together - every map, arena and side mission has been played in co-op. Showcase video on the page.[/i]
+[i]Unofficial mod. Version 1.0.1: Horde and the whole story campaign are playable together, up to 4 players - every map, arena and side mission has been played in co-op. Showcase video with four players on the page.[/i]
 
 Trepang2 is a single-player game. This mod switches on Unreal Engine's own networking and adds everything the game is missing for up to 4 players: [b]Horde / Survival[/b] together and the [b]story campaign[/b] together.
 
@@ -102,7 +102,7 @@ Trepang2 is a single-player game. This mod switches on Unreal Engine's own netwo
 [*][b]v0.8.x[/b] - bosses' special mechanics, special levels, side missions
 [*][b]v0.9[/b] - done: spectating while down, progress for every player, rejoining, elevators and level pieces, end of the game
 [*][b]v1.0[/b] - done: the whole Trepang2 campaign + Horde playable in co-op
-[*][b]next[/b] - co-op for up to 4 players
+[*][b]v1.0.0-1.0.1[/b] - done: co-op for up to 4 players, friends can join any time
 [/list]
 
 [size=4][b]Uninstall[/b][/size]

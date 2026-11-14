@@ -8,7 +8,7 @@ Built on Unreal Engine's own networking plus the [UE4SS](https://github.com/UE4S
 > The mod was made with AI (Claude) to the player's design. It is not affiliated with Trepang Studios /
 > Team17. No game files are stored or distributed here.
 
-**Current version: v1.0.0** — download it from [Releases](../../releases).
+**Current version: v1.0.1** — download it from [Releases](../../releases).
 Notes for every version are in [docs/releases](docs/releases).
 
 ![Host sees the partner](screenshots/host_sees_client.png)
@@ -75,7 +75,7 @@ the story for everyone - and story objective markers show for every player.
 ## Known issues
 See [docs/releases](docs/releases). v1.0: every campaign map, Horde arena and side mission has been played in co-op with joins, restarts, checkpoint reloads, mission ends and the credits. Boss fights are shared like every other enemy, but their scripted scenes have not been played start to finish in co-op yet - reports welcome.
 
-Up to 4 players: every feature was run through big automated test passes with 1, 2, 3 and 4 game copies.
+Up to 4 players: every feature was run through big automated test passes with 1, 2, 3 and 4 game copies. v1.0.1: friends can join one after another at any time (a 3rd/4th player joining late was dropped in 1.0.0).
 
 Steam mode: one report of the joining player getting stuck on the title screen (not reproducible with a single Steam account yet) - IP mode with Radmin VPN / ZeroTier works meanwhile; a UE4SS.log from the joining player helps.
 

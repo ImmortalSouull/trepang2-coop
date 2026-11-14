@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "1.0.0"
+local VERSION = "1.0.1"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -575,7 +575,7 @@ local function pumpMessages()
         local batch = inbox; inbox = {}
         for _, m in ipairs(batch) do dispatch(m.side, m.pc, m.text) end
     end
-    if #outbox > 0 then
+    if #outbox > 0 or (S.heldDirect and #S.heldDirect > 0) then
         local batch = outbox; outbox = {}
         local me = localPC()
         T2CName = T2CName or FName("T2C", EFindName.FNAME_Add)
@@ -590,11 +590,28 @@ local function pumpMessages()
                 if not S.hosting or (ok and S.firstSeen and S.firstSeen[n]) then table.insert(remotes, pc) end
             end
         end
+        -- Messages to one partner wait until that partner's game talks to us too (it's in the level):
+        -- a partner joining while another one was already playing got the spawn point, campaign
+        -- progress (dozens of entries) etc. during its map load, didn't ack, and with the rest of the
+        -- traffic its connection overflowed - dropped every ~10 s, it never got in (late joiners).
+        S.heldDirect = S.heldDirect or {}
+        if #S.heldDirect > 0 then   -- (held ones first: they're older)
+            for _, m in ipairs(batch) do table.insert(S.heldDirect, m) end
+            batch, S.heldDirect = S.heldDirect, {}
+        end
         for _, m in ipairs(batch) do
             if m.to == "server" then
                 if valid(me) then pcall(function() me:ServerChangeName(m.msg) end) end
             elseif m.to == "pc" then
-                if valid(m.pc) then pcall(function() m.pc:ClientMessage(m.msg, T2CName, 0.0) end) end
+                local ok, n = pcall(function() return m.pc:GetFName():ToString() end)
+                if not valid(m.pc) then
+                    -- gone
+                elseif S.hosting and ok and not (S.firstSeen and S.firstSeen[n]) then
+                    m.at = m.at or os.clock()
+                    if os.clock() - m.at < 60 then table.insert(S.heldDirect, m) end
+                else
+                    pcall(function() m.pc:ClientMessage(m.msg, T2CName, 0.0) end)
+                end
             else
                 for _, pc in ipairs(remotes) do pcall(function() pc:ClientMessage(m.msg, T2CName, 0.0) end) end
             end
@@ -609,9 +626,30 @@ local function strParam(p)
 end
 
 pcall(function()
+    -- Our messages ride on ServerChangeName, so the engine "renames" the sender for each one, and every
+    -- rename makes the host send ALL players a reliable "X changed name" notice (PlayerState
+    -- OnRep_PlayerName -> ClientReceiveLocalizedMessage). A partner already playing sends ~40 a
+    -- second: one joining (loading, not acking) overflowed and was dropped every ~10 s, it could never
+    -- get in. While the engine handles our message the sender's PlayerState counts as inactive - that
+    -- notice is skipped for inactive players - and is active again right after (same call).
+    local quietPS = nil
     RegisterHook("/Script/Engine.PlayerController:ServerChangeName", function(self, name)
         if not S.hosting then return end
-        table.insert(inbox, { side = "server", pc = self:get(), text = strParam(name) })
+        local pc = self:get()
+        local text = strParam(name)
+        table.insert(inbox, { side = "server", pc = pc, text = text })
+        if type(text) == "string" and text:sub(1, #PREFIX) == PREFIX then
+            pcall(function()
+                local ps = pc.PlayerState
+                if ps and ps:IsValid() and not ps.bIsInactive then ps.bIsInactive = true; quietPS = ps end
+            end)
+        end
+    end, function()
+        if quietPS then
+            local ps = quietPS
+            quietPS = nil
+            pcall(function() if ps:IsValid() then ps.bIsInactive = false end end)
+        end
     end)
     RegisterHook("/Script/Engine.PlayerController:ClientMessage", function(self, msg)
         if S.hosting then return end
@@ -1810,7 +1848,8 @@ S.every(2000, function()
 end)
 
 -- client: tell the host who we are (repeated; cheap, and survives reconnects)
-S.every(3000, function()
+-- (every second: the host holds what it has for a newcomer until it hears from them)
+S.every(1000, function()
     if S.joined and not S.hosting and netDriver() then S.toServer("NM", S.getMyName()) end
 end)
 

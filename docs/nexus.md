@@ -4,7 +4,7 @@
 Trepang2 Co-op (Horde + Campaign)
 
 ## Version
-1.0.1
+1.0.2
 
 ## Category
 Gameplay  (tags: Multiplayer / Co-op, Gameplay)

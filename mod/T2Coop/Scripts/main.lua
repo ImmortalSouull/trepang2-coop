@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "1.0.1"
+local VERSION = "1.0.2"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -123,6 +123,15 @@ end
 local function netDriver()
     local w = world()
     if valid(w) and valid(w.NetDriver) then return w.NetDriver end
+end
+
+-- a join in progress (the engine's pending game with its own net driver, before the level loads)
+function S.pendingJoin()
+    for _, p in ipairs(FindAllOf("PendingNetGame") or {}) do
+        local ok, d = pcall(function() return p.NetDriver end)
+        if ok and valid(p) and valid(d) then return true end
+    end
+    return false
 end
 
 local function isServer()
@@ -271,8 +280,22 @@ function S.join(ip)
     S.rejoin = nil
     local addr = S.lastIP
     -- a SteamID64 (17 digits) means a Steam P2P address
-    if addr:match("^%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d$") then addr = "steam." .. addr end
-    log("joining " .. addr)
+    if addr:match("^%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d$") then
+        addr = "steam." .. addr
+        -- only the Steam network mode can reach a SteamID (IP mode runs the game without Steam
+        -- networking: the join just failed, again and again, with no word why)
+        if S.netMode ~= "steam" or S.iniOk == false then
+            S.joined, S.rejoin = false, nil
+            log("join " .. addr .. " needs Steam mode (now " .. tostring(S.netMode) .. ", ini ok " .. tostring(S.iniOk) .. ")")
+            S.notify(S.isRussian()
+                and (S.netMode ~= "steam" and "CO-OP: вход по SteamID работает в режиме STEAM: F4 - IP / STEAM MODE, затем перезапустите игру (или введите IP хоста)"
+                    or "CO-OP: перезапустите игру один раз - режим STEAM включится после перезапуска")
+                or (S.netMode ~= "steam" and "CO-OP: joining by SteamID needs Steam mode: F4 - IP / STEAM MODE, then restart the game (or enter the host's IP)"
+                    or "CO-OP: restart the game once - Steam mode starts after a restart"))
+            return
+        end
+    end
+    log("joining " .. addr .. " (network mode " .. tostring(S.netMode) .. ")")
     KSL:ExecuteConsoleCommand(world(), "open " .. addr, pc)
     keepClearingLoadingScreen(30000)
 end
@@ -1543,6 +1566,17 @@ S.every(1000, function()
         S.notify(S.isRussian() and "CO-OP: конец игры - хост вернулся в главное меню. Спасибо за игру!"
             or "CO-OP: the end - the host went back to the main menu. Thanks for playing!")
         return
+    end
+    -- still connecting (Steam P2P takes a while: a retry 4 s in cut the first attempt short, then
+    -- every try, and Steam joins never got through): wait for that attempt to end first
+    if S.pendingJoin() then
+        S.pendingSince = S.pendingSince or os.time()
+        if os.time() - S.pendingSince < (S.lastIP:find("^%d+$") and #S.lastIP == 17 and 45 or 25) then
+            S.rejoin = nil
+            return
+        end
+    else
+        S.pendingSince = nil
     end
     -- first try soon after losing the host, then every 15 s for about 4 minutes
     S.rejoin = S.rejoin or { at = os.time() + 4, tries = 0 }

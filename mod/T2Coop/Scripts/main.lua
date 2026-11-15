@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "1.0.3"
+local VERSION = "1.0.4"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -3292,8 +3292,12 @@ local function applyAnimState(ai, st)
     ai.Stance = st.stance
     ai.LeanStatus = st.lean
     ai.AirDuration = st.air
-    -- where they look: the body's aim pose follows the player's view pitch
-    pcall(function() ai.AimPitch = st.pitch; ai.AimPitchTarget = st.pitch end)
+    -- where they look: the body's aim pose follows the player's view pitch. The body's aim pose takes
+    -- -1..1 (1 = straight up), not degrees: in degrees a partner looking a little down had the body
+    -- staring at the floor, and the few degrees of recoil when firing threw the arms straight up
+    -- (player report: "shooting makes it look straight up, anything else straight down")
+    local aim = math.max(-1, math.min(1, (st.pitch or 0) / 90))
+    pcall(function() ai.AimPitch = aim; ai.AimPitchTarget = aim end)
     pcall(function() ai.IsDropkicking = (st.flags & DROPKICK_BIT) ~= 0 end)
     ai.LastMoveSpeed = st.speed
     if st.speed > 0 then ai.LastMoveDirection = st.dir end

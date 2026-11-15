@@ -150,7 +150,7 @@ foreach ($i in $all) { Cmd $i 'T2C.menuClose(); T2C.mySkin=nil; return "c"' 0 }
 
 # fight: partners shoot first (their damage must reach the host's enemies), then everyone
 God
-$deadLua = 'local d,a,h=0,0,0; for _,c in ipairs(T2C.allOf("/Script/CPPFPS.BaseCharacter")) do if not c:IsA(StaticFindObject("/Script/CPPFPS.BasePlayer")) then if c.bIsDead then d=d+1 else a=a+1; h=h+(tonumber(c.Health) or 0) end end end; return string.format("dead %d alive %d hp %.0f", d, a, h)'
+$deadLua = 'local d,a,h=0,0,0; for _,c in ipairs(T2C.allOf("/Script/CPPFPS.BaseCharacter")) do if not c:IsA(StaticFindObject("/Script/CPPFPS.BasePlayer")) then if c.bIsDead then d=d+1 else a=a+1; h=h+(tonumber(c.Health) or 0) end end end; return string.format("dead %d alive %d hp %.0f hits %d", d, a, h, T2C.stats.hits or 0)'
 $before = Q A $deadLua 2
 for ($k = 0; $k -lt 12; $k++) {
   foreach ($c in $cl) {
@@ -167,7 +167,10 @@ $after = Q A $deadLua 2
 $h0 = if ($before -match "alive (\d+) hp (\d+)") { @([int]$Matches[1], [int]$Matches[2]) } else { @(0, 0) }
 $h1 = if ($after -match "alive (\d+) hp (\d+)") { @([int]$Matches[1], [int]$Matches[2]) } else { @(0, 0) }
 # (corpses vanish and new enemies come: damage = less health among the living, or fewer living)
-$hit = ($h1[0] -lt $h0[0]) -or ($h1[0] -eq $h0[0] -and $h1[1] -lt $h0[1])
+# (partners' hits the host applied - new Horde waves made the alive/hp counts useless as a measure)
+$k0 = if ($before -match "hits (\d+)") { [int]$Matches[1] } else { 0 }
+$k1 = if ($after -match "hits (\d+)") { [int]$Matches[1] } else { 0 }
+$hit = ($h1[0] -lt $h0[0]) -or ($h1[0] -eq $h0[0] -and $h1[1] -lt $h0[1]) -or ($cl.Count -gt 0 -and $k1 -gt $k0)
 Check "$(if ($cl.Count) {'partner'} else {'host'}) damage/kills reach the host" $hit "$before -> $after"
 for ($k = 0; $k -lt 8; $k++) { foreach ($i in $all) { Cmd $i 'T2C.walk(1); return T2C.shootNearest(6)' 0 }; Start-Sleep 3; God }
 [void](Health "fight")

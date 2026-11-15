@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "1.0.4"
+local VERSION = "1.0.5"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -899,6 +899,87 @@ S.every(1000, function()
     end
     for k in pairs(S.ghostMiss) do if not seen[k] then S.ghostMiss[k] = nil end end
 end)
+
+-- Partner's loadout between levels. The game carries weapons over in GameInstance.PlayerPersistentInventory,
+-- updated by its own level-change code - which on a partner never runs (the host changes the level), so a
+-- partner arrived with whatever was stored last (the gun from the last mission end / combat simulator,
+-- whatever they had picked since - player report). Keep it up to date from the partner's pawn instead -
+-- only while alive, armed and in the level (never an empty or half-loaded inventory).
+S.every(2000, function()
+    if not S.joined or S.hosting or S.loading or S.noInvSync then return end
+    if not S.settled(5) or (S.me and S.me.down) or (S.cut and S.cut.active) then return end
+    local pawn = S.client and S.client.pawn
+    if not valid(pawn) or pawn.bIsDead or not valid(pawn.CurrentWeapon) then return end
+    S.invLib = S.invLib or StaticFindObject("/Script/CPPFPS.Default__PlayerPersistentInventoryLib")
+    if not valid(S.invLib) then return end
+    local ok, err = pcall(function() S.invLib:UpdatePlayerPersistentInventory(pawn) end)
+    if not ok and not S.invErrLogged then S.invErrLogged = true; log("loadout save: " .. tostring(err)) end
+end)
+
+-- Enemy voices. Enemies only "think" on the host, so their combat lines ("contact!", callouts, panic) were
+-- heard only there - partners heard silent enemies (player report: no mallcop voice lines). The host
+-- notices an enemy starting a line and sends which line, which voice and where; a partner plays that line
+-- in that voice at its own copy of the enemy, from its own game files (so a partner's voice mods work too).
+S.voiceSeen = {}
+S.every(100, function()
+    if not isServer() or S.loading then return end
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    local seen = {}
+    for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+        if not c:IsA(playerCls) and not c.bIsDead then
+            local key = c:GetFullName()
+            local speaking, line = false, nil
+            pcall(function() speaking = c.bIsSpeaking; line = c.CurrentLineSpeaking end)
+            if speaking and valid(line) then
+                local path = line:GetFullName():match("%s(.+)$") or ""
+                seen[key] = true
+                if S.voiceSeen[key] ~= path then
+                    S.voiceSeen[key] = path
+                    local l = c:K2_GetActorLocation()
+                    local voice = 0
+                    pcall(function() voice = tonumber(c.Voice) or 0 end)
+                    S.toClients("VL", fmtVec(l), path, voice)
+                end
+            end
+        end
+    end
+    for k in pairs(S.voiceSeen) do if not seen[k] then S.voiceSeen[k] = nil end end
+end)
+S.voiceCue = {}   -- "line path|voice" -> sound cue (or false)
+handlers.client["VL"] = function(_, p)
+    if S.loading or not S.settled(2) then return end
+    local pos, path, voice = vec(p, 1), p[4] or "", tonumber(p[5]) or 0
+    local npc = nearestNPC(pos, 400)
+    if not valid(npc) or path == "" then return end
+    local ck = path .. "|" .. voice
+    local cue = S.voiceCue[ck]
+    if cue == nil then
+        cue = false
+        pcall(function()
+            local cls = StaticFindObject(path)
+            if not valid(cls) and LoadAsset then cls = LoadAsset(path) end
+            local cdo = cls:GetCDO()
+            local lines = cdo.DialogueLines
+            local any
+            for i = 1, lines:GetArrayNum() do
+                local e = lines[i]
+                local snd = e.LineSoundCue
+                if valid(snd) then
+                    any = any or snd
+                    if tonumber(e.Voice) == voice then cue = snd break end
+                end
+            end
+            if not cue then cue = any or false end
+        end)
+        S.voiceCue[ck] = cue
+    end
+    if not cue then return end
+    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+    pcall(function()
+        GS:PlaySoundAtLocation(world(), cue, npc:K2_GetActorLocation(), npc:K2_GetActorRotation(), 1.0, 1.0, 0.0, nil, nil, npc)
+    end)
+    S.stats.voices = (S.stats.voices or 0) + 1
+end
 
 -- Map load bookkeeping.
 RegisterLoadMapPreHook(function()

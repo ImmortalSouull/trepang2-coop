@@ -1,7 +1,7 @@
 -- T2Coop: co-op for Trepang2 on top of Unreal's built-in networking.
 -- Host:   T2C.host("/Game/Maps/HordeMode/Horde_Killhouse")
 -- Client: T2C.join("1.2.3.4")
-local VERSION = "1.0.2"
+local VERSION = "1.0.3"
 local function log(s) print("[T2Coop] " .. tostring(s) .. "\n") end
 
 local PLAYER_CDO = "/Game/Blueprint/Player/PlayerBP.Default__PlayerBP_C"
@@ -161,6 +161,10 @@ end
 local function stopLoadingScreen()
     local gi = FindFirstOf("GameInstanceBP_C")
     if not valid(gi) then return end
+    -- (nothing at all in a load or its first seconds - not even SetBootFlowFinished, which used to run
+    -- before every check below: the host still froze now and then ~2 s after a map load, the same
+    -- loading-movie deadlock as below, with 2 game copies)
+    if S.loading or os.clock() - (S.loadedClock or -99) < 4 then return end
     pcall(function() gi:SetBootFlowFinished() end)
     -- Not once we're in the host's world (spawn point received): calling it while a client was
     -- setting up its pawn crashed the game (blueprint code writing into a widget already gone).
@@ -593,10 +597,25 @@ local function dispatch(side, pc, text)
 end
 
 local T2CName
+S.simQ, S.simLast = {}, 0
 local function pumpMessages()
     if #inbox > 0 then
         local batch = inbox; inbox = {}
+        if S.simJitter then
+            -- dev: a bumpy connection (VPN / internet): messages arrive late and in bursts, in order
+            for _, m in ipairs(batch) do
+                S.simLast = math.max(S.simLast, os.clock() + math.random() * S.simJitter)
+                m.due = S.simLast
+                table.insert(S.simQ, m)
+            end
+            batch = {}
+        end
         for _, m in ipairs(batch) do dispatch(m.side, m.pc, m.text) end
+    end
+    if #S.simQ > 0 then
+        local now, k = os.clock(), 0
+        while S.simQ[k + 1] and S.simQ[k + 1].due <= now do k = k + 1 end
+        for i = 1, k do local m = table.remove(S.simQ, 1); dispatch(m.side, m.pc, m.text) end
     end
     if #outbox > 0 or (S.heldDirect and #S.heldDirect > 0) then
         local batch = outbox; outbox = {}
@@ -791,6 +810,7 @@ end)
 -- Client: kill our copy of that enemy (visually).
 S.killQueue = {}
 handlers.client["K"] = function(_, p)
+    if S.devNoK then return end   -- dev: make ghosts (tests the ghost cleanup below)
     table.insert(S.killQueue, vec(p, 1))
 end
 S.every(60, function()
@@ -808,6 +828,76 @@ S.every(60, function()
             pcall(function() npc:StartLiveRagdoll(1.0, FName("pelvis", EFindName.FNAME_Add), { X = 0, Y = 0, Z = 0 }, false, true) end)
         end
     end
+end)
+
+-- Ghost enemies. A death reaches a client as "an enemy died here" - but an enemy that died far from a
+-- partner isn't on that partner's machine yet (out of network range), and when the partner comes closer
+-- the engine sends it over ALIVE (the game doesn't replicate deaths). With enemies in a crowd the nearest
+-- one could also be the wrong one. Such ghosts stood around for good and couldn't be killed. So the
+-- host tells partners where its living enemies are, once a second; a partner's living enemy with no
+-- living one of the host's near it three times in a row is put down.
+S.every(1000, function()
+    if not isServer() or S.loading then return end
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    local parts = {}
+    for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+        if not c:IsA(playerCls) and not c.bIsDead then
+            local l = c:K2_GetActorLocation()
+            table.insert(parts, string.format("%.0f|%.0f|%.0f", l.X, l.Y, l.Z))
+        end
+    end
+    -- (too many to send: partners then leave everything alone rather than guess)
+    if #parts > 250 then S.toClients("AL", -1) return end
+    S.toClients("AL", #parts, table.unpack(parts))
+end)
+S.hostAlive, S.ghostMiss = nil, {}
+handlers.client["AL"] = function(_, p)
+    if tonumber(p[1]) == -1 then S.hostAlive = nil return end
+    local list = {}
+    for i = 2, #p - 2, 3 do table.insert(list, vec(p, i)) end
+    S.hostAlive = { list = list, at = os.clock() }
+end
+S.every(1000, function()
+    local h = S.hostAlive
+    if not S.joined or S.hosting or S.loading or not h or os.clock() - h.at > 1.6 then S.ghostMiss = {} return end
+    if not S.settled(5) then return end
+    local playerCls = classOf("/Script/CPPFPS.BasePlayer")
+    local seen = {}
+    for _, c in ipairs(S.allOf("/Script/CPPFPS.BaseCharacter")) do
+        -- (copies the host sent us: Role 1; anything spawned only here is handled elsewhere)
+        -- (not the helicopters' AI "bullseye" targets: their owner keeps using them - removing one
+        -- crashed the game, see the local-only cleanup)
+        if not c:IsA(playerCls) and not c.bIsDead and c.Role == 1 and not c:GetFName():ToString():find("Bullseye") then
+            local key = c:GetFullName()
+            local l = c:K2_GetActorLocation()
+            local near, best = false, nil
+            for _, q in ipairs(h.list) do
+                local d = dist2(q, l)
+                if not best or d < best then best = d end
+                if d < 600 * 600 then near = true break end
+            end
+            -- (health is replicated, the death isn't: a copy at 0 or below is dead on the host for sure)
+            local hp = tonumber(c.Health) or 1
+            if near and hp > 0 then
+                S.ghostMiss[key] = nil
+            else
+                seen[key] = true
+                S.ghostMiss[key] = (S.ghostMiss[key] or 0) + ((hp <= 0) and 2 or 1)
+                if S.ghostMiss[key] >= 3 then
+                    S.ghostMiss[key] = nil
+                    log(string.format("enemy dead on the host still standing here - putting it down: %s at %.0f %.0f %.0f (host has %d alive, nearest %.0f, hp %s)",
+                        c:GetFName():ToString(), l.X, l.Y, l.Z, #h.list, best and math.sqrt(best) or -1, tostring(c.Health)))
+                    S.stats.ghosts = (S.stats.ghosts or 0) + 1
+                    GS = GS or StaticFindObject("/Script/Engine.Default__GameplayStatics")
+                    DamageTypeCls = DamageTypeCls or classOf("/Script/Engine.DamageType")
+                    pcall(function() GS:ApplyDamage(c, 100000, nil, nil, DamageTypeCls) end)
+                    c.bIsDead = true
+                    pcall(function() c:StartLiveRagdoll(1.0, FName("pelvis", EFindName.FNAME_Add), { X = 0, Y = 0, Z = 0 }, false, true) end)
+                end
+            end
+        end
+    end
+    for k in pairs(S.ghostMiss) do if not seen[k] then S.ghostMiss[k] = nil end end
 end)
 
 -- Map load bookkeeping.
@@ -1074,7 +1164,28 @@ S.every(30, function()
         local cam = pc.PlayerCameraManager:GetCameraLocation()
         local rot = pc.PlayerCameraManager:GetCameraRotation()
         S.stats.shotsSent = (S.stats.shotsSent or 0) + 1
-        S.toServer("SH", fmtVec(cam), string.format("%.2f|%.2f", rot.Yaw, rot.Pitch), shot.ammo - ammo, classPath(w))
+        -- what this shot hit on OUR screen: enemies stand a little elsewhere on the host (network delay,
+        -- more over a VPN), so the host's own trace often missed what we clearly hit - the host falls
+        -- back to its enemy nearest to this spot
+        local hitPos, hitHead = "", 0
+        pcall(function()
+            local KSL = StaticFindObject("/Script/Engine.Default__KismetSystemLibrary")
+            local KML = StaticFindObject("/Script/Engine.Default__KismetMathLibrary")
+            local fwd = KML:GetForwardVector(rot)
+            local to = { X = cam.X + fwd.X * 15000, Y = cam.Y + fwd.Y * 15000, Z = cam.Z + fwd.Z * 15000 }
+            local hit = {}
+            if KSL:LineTraceSingle(world(), cam, to, 0, false, { pawn }, 0, hit, true,
+                    { R = 1, G = 0, B = 0, A = 1 }, { R = 0, G = 1, B = 0, A = 1 }, 0) then
+                local a = hit.Actor
+                a = (type(a) == "userdata" and a.Get) and a:Get() or a
+                if valid(a) and a:IsA(classOf("/Script/CPPFPS.BaseCharacter")) and not a:IsA(classOf("/Script/CPPFPS.BasePlayer")) and not a.bIsDead then
+                    local al = a:K2_GetActorLocation()
+                    hitPos = fmtVec(al)
+                    if hit.ImpactPoint.Z > al.Z + 55 then hitHead = 1 end
+                end
+            end
+        end)
+        S.toServer("SH", fmtVec(cam), string.format("%.2f|%.2f", rot.Yaw, rot.Pitch), shot.ammo - ammo, classPath(w), hitPos, hitHead)
     end
     shot.weap, shot.ammo = name, ammo
 end)
@@ -2078,7 +2189,12 @@ handlers.server["SH"] = function(pc, p)
     local charCls = classOf("/Script/CPPFPS.BaseCharacter")
     local fwd = KML:GetForwardVector({ Pitch = pitch, Yaw = yaw, Roll = 0 })
     local ignore = valid(puppet) and { puppet } or {}
+    -- what the partner hit on their own screen (see the client side): used when our trace misses it
+    local theirHit = (p[8] and p[8] ~= "" and p[10]) and vec(p, 8) or nil
+    local theirHead = p[11] == "1"
     for _ = 1, shots do
+        -- (a shotgun: the partner's one check was for the middle of the spread - not every pellet)
+        local spare = math.max(1, math.floor(st.pellets * 0.7))
         for _ = 1, st.pellets do
             local dir = st.pellets > 1 and KML:RandomUnitVectorInConeInDegrees(fwd, 4.0) or fwd
             local from = { X = cam.X + dir.X * 20, Y = cam.Y + dir.Y * 20, Z = cam.Z + dir.Z * 20 }
@@ -2089,6 +2205,7 @@ handlers.server["SH"] = function(pc, p)
                     { R = 1, G = 0, B = 0, A = 1 }, { R = 0, G = 1, B = 0, A = 1 }, 0)
             end)
             S.stats.lastTrace = tostring(ok) .. "/" .. tostring(blocked)
+            local landed = false
             if ok and blocked then
                 local actor
                 pcall(function() local a = hit.Actor; actor = (type(a) == "userdata" and a.Get) and a:Get() or a end)
@@ -2104,7 +2221,24 @@ handlers.server["SH"] = function(pc, p)
                     if headshot and not actor.bImmuneToHeadshots then dmg = dmg * st.head end
                     GS:ApplyPointDamage(actor, dmg, dir, hit, pc, valid(puppet) and puppet or nil, DamageTypeCls)
                     S.stats.hits = S.stats.hits + 1
+                    landed = true
                     if actor.bIsDead then creditPartnerKill(actor, dmg) end
+                end
+            end
+            if not landed and theirHit and spare > 0 then
+                spare = spare - 1
+                -- our trace missed what the partner hit on their screen: our enemy nearest to it
+                local target = nearestNPC(theirHit, 300)
+                if valid(target) then
+                    local tl = target:K2_GetActorLocation()
+                    local h = { ImpactPoint = tl, Location = tl, BoneName = FName(theirHead and "head" or "spine_03", EFindName.FNAME_Add) }
+                    local dmg = st.dmg
+                    if theirHead and not target.bImmuneToHeadshots then dmg = dmg * st.head end
+                    local d = KML:GetDirectionUnitVector(cam, tl)
+                    pcall(function() GS:ApplyPointDamage(target, dmg, d, h, pc, valid(puppet) and puppet or nil, DamageTypeCls) end)
+                    S.stats.hits = S.stats.hits + 1
+                    S.stats.theirHits = (S.stats.theirHits or 0) + 1
+                    if target.bIsDead then creditPartnerKill(target, dmg) end
                 end
             end
         end
@@ -3278,10 +3412,45 @@ handlers.server["P"] = function(pc, p)
     if not valid(pawn) then return end
     local l, yaw, pitch, v = vec(p, 1), tonumber(p[4]), tonumber(p[5]), vec(p, 6)
     if S.devNoPose then return end   -- dev: move the puppet by hand
-    pawn:K2_SetActorLocationAndRotation(l, { Pitch = 0, Yaw = yaw, Roll = 0 }, false, {}, true)
     pcall(function() pawn.CharacterMovement.Velocity = v end)
     pcall(function() pc:SetControlRotation({ Pitch = pitch, Yaw = yaw, Roll = 0 }) end)
+    if S.noSmooth then
+        pawn:K2_SetActorLocationAndRotation(l, { Pitch = 0, Yaw = yaw, Roll = 0 }, false, {}, true)
+        return
+    end
+    -- Smoothed (below): over a VPN / the internet poses come unevenly, in bursts - set straight away the
+    -- partner jumped around ("laggy, out of sync" over VPN, fine on LAN).
+    local key = pawn:GetFullName()
+    local first = S.poseT[key] == nil
+    S.poseT[key] = { pawn = pawn, l = l, v = v, yaw = yaw, at = os.clock() }
+    local cur = pawn:K2_GetActorLocation()
+    if first or dist2(cur, l) > 400 * 400 then
+        pawn:K2_SetActorLocationAndRotation(l, { Pitch = 0, Yaw = yaw, Roll = 0 }, false, {}, true)
+    end
 end
+-- Host: partner bodies glide to their latest pose (moved on by its velocity for a moment), instead of
+-- jumping 20 times a second. Nothing new for half a second (loading, down, gone): left where it is.
+S.poseT = {}
+S.every(0, function(dt)
+    if not next(S.poseT) then return end
+    local now = os.clock()
+    local k = 1 - math.exp(-(dt or 16) / 1000 * 14)
+    for key, e in pairs(S.poseT) do
+        if not valid(e.pawn) or now - e.at > 0.5 then
+            S.poseT[key] = nil
+        else
+            local ahead = math.min(now - e.at, 0.15)
+            local tx, ty, tz = e.l.X + e.v.X * ahead, e.l.Y + e.v.Y * ahead, e.l.Z + e.v.Z * ahead
+            pcall(function()
+                local c = e.pawn:K2_GetActorLocation()
+                local r = e.pawn:K2_GetActorRotation()
+                local dy = ((e.yaw - r.Yaw + 540) % 360) - 180
+                e.pawn:K2_SetActorLocationAndRotation({ X = c.X + (tx - c.X) * k, Y = c.Y + (ty - c.Y) * k, Z = c.Z + (tz - c.Z) * k },
+                    { Pitch = 0, Yaw = r.Yaw + dy * k, Roll = 0 }, false, {}, true)
+            end)
+        end
+    end
+end)
 
 -- Host: the game's own "restart level" reloads the map WITHOUT ?listen, which silently ends the
 -- session. If we're hosting and end up on a map without a server, re-host it (clients reconnect
